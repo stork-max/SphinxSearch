@@ -411,7 +411,7 @@ class CSphLowercaser
 	friend class ISphTokenizer;
 	friend class CSphTokenizerBase;
 	friend class CSphTokenizer_UTF8_Base;
-    friend class CSphTokenizer_UTF8Chinese;
+    template<bool> friend class CSphTokenizer_UTF8Chinese;
 	friend class CSphTokenizerBase2;
 
 public:

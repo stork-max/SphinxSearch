@@ -13,6 +13,7 @@
 // did not, you can find it at http://www.gnu.org/
 //
 
+#include "darts-clone.h"
 #include "sphinx.h"
 #include "sphinxstem.h"
 #include "sphinxquery.h"
@@ -2286,7 +2287,7 @@ template < bool IS_QUERY >
 class CSphTokenizer_UTF8Chinese : public CSphTokenizerBase2
 {
 public:
-                                                                CSphTokenizer_UTF8Chinese ();
+                                                CSphTokenizer_UTF8Chinese ();
         virtual bool                            SetChineseDictionary ( const char * sConfig, CSphString & sError );
         virtual void                            SetBuffer ( const BYTE * sBuffer, int iLength );
         virtual BYTE *                          GetToken ();
