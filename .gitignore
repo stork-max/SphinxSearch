@@ -1,5 +1,8 @@
 *.swp
 *.swo
+cscope.out
+ctags.files
+tags
 .hgignore
 CMakeLists.txt
 COPYING
