@@ -9222,6 +9222,7 @@ SearchHandler_c::SearchHandler_c ( int iQueries, bool bSphinxql, bool bMaster )
 	m_iStart = 0;
 	m_iEnd = 0;
 	m_bMultiQueue = false;
+	m_bFacetQueue = false;
 
 	m_dQueries.Resize ( iQueries );
 	m_dResults.Resize ( iQueries );
@@ -11288,7 +11289,8 @@ static const char * g_dSqlStmts[STMT_TOTAL] =
 	"flush_rtindex", "flush_ramchunk", "show_variables", "truncate_rtindex", "select_sysvar",
 	"show_collation", "show_character_set", "optimize_index", "show_agent_status",
 	"show_index_status", "show_profile", "alter_add", "alter_drop", "show_plan",
-	"select_dual", "show_databases", "create_plugin", "drop_plugin", "show_plugins", "show_threads"
+	"select_dual", "show_databases", "create_plugin", "drop_plugin", "show_plugins", "show_threads",
+    "facet"
 };
 
 
