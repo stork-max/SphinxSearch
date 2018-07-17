@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -29,6 +29,7 @@
 	#define USE_RLP			0	/// whether to compile RLP support
 	#define USE_WINDOWS		1	/// whether to compile for Windows
 	#define USE_SYSLOG		0	/// whether to use syslog for logging
+	#define HAVE_STRNLEN	1	
 
 	#define UNALIGNED_RAM_ACCESS	1
 	#define USE_LITTLE_ENDIAN		1
@@ -193,14 +194,21 @@ inline const	DWORD *	STATIC2DOCINFO ( const DWORD * pAttrs )	{ return STATIC2DOC
 
 /////////////////////////////////////////////////////////////////////////////
 
-#include "sphinxversion.h"
+#ifdef BUILD_WITH_CMAKE
+	#include "gen_sphinxversion.h"
+#else
+	#include "sphinxversion.h"
+#endif
 
 #ifndef SPHINX_TAG
 #define SPHINX_TAG "-release"
 #endif
 
-#define SPHINX_VERSION			"2.2.10" SPHINX_BITS_TAG SPHINX_TAG " (" SPH_GIT_COMMIT_ID ")"
-#define SPHINX_BANNER			"Sphinx " SPHINX_VERSION "\nCopyright (c) 2001-2015, Andrew Aksyonoff\nCopyright (c) 2008-2015, Sphinx Technologies Inc (http://sphinxsearch.com)\n\n"
+// below is for easier extraction of the ver. by any external scripts
+#define SPHINX_VERSION_NUMBERS    "2.2.11"
+
+#define SPHINX_VERSION           SPHINX_VERSION_NUMBERS SPHINX_BITS_TAG SPHINX_TAG " (" SPH_GIT_COMMIT_ID ")"
+#define SPHINX_BANNER			"Sphinx " SPHINX_VERSION "\nCopyright (c) 2001-2016, Andrew Aksyonoff\nCopyright (c) 2008-2016, Sphinx Technologies Inc (http://sphinxsearch.com)\n\n"
 #define SPHINX_SEARCHD_PROTO	1
 #define SPHINX_CLIENT_VERSION	1
 
@@ -2099,6 +2107,7 @@ protected:
 
 		CSphVector<BYTE*> m_dTmpFieldStorage;
 		CSphVector<BYTE*> m_dTmpFieldPtrs;
+		CSphVector<BYTE> m_dFiltered;
 
 		int m_iStartPos;
 		Hitpos_t m_iHitPos;
@@ -2507,7 +2516,8 @@ enum ESphFilter
 	SPH_FILTER_FLOATRANGE	= 2,	///< filter by float range
 	SPH_FILTER_STRING		= 3,	///< filter by string value
 	SPH_FILTER_NULL			= 4,	///< filter by NULL
-	SPH_FILTER_USERVAR		= 5		///< filter by @uservar
+	SPH_FILTER_USERVAR		= 5,	///< filter by @uservar
+	SPH_FILTER_STRING_LIST	= 6		///< filter by string list
 };
 
 
@@ -2531,7 +2541,7 @@ public:
 		float			m_fMaxValue;	///< range max
 	};
 	CSphVector<SphAttr_t>	m_dValues;	///< integer values set
-	CSphString			m_sRefString;	///< reference string value
+	CSphVector<CSphString>	m_dStrings;	///< string values
 
 public:
 						CSphFilterSettings ();

@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -22,8 +22,12 @@
 //////////////////////////////////////////////////////////////////////////
 // EXTENDED PARSER RELOADED
 //////////////////////////////////////////////////////////////////////////
-
-#include "yysphinxquery.h"
+class XQParser_t;
+#ifdef CMAKE_GENERATED_GRAMMAR
+	#include "bissphinxquery.h"
+#else
+	#include "yysphinxquery.h"
+#endif
 
 // #define XQDEBUG 1
 // #define XQ_DUMP_TRANSFORMED_TREE 1
@@ -164,7 +168,11 @@ void yyerror ( XQParser_t * pParser, const char * sMessage )
 		pParser->m_pParsed->m_sParseError.SetSprintf ( "%s near '%s'", sMessage, pParser->m_pLastTokenStart );
 }
 
-#include "yysphinxquery.c"
+#ifdef CMAKE_GENERATED_GRAMMAR
+	#include "bissphinxquery.c"
+#else
+	#include "yysphinxquery.c"
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -1015,6 +1023,14 @@ int XQParser_t::GetToken ( YYSTYPE * lvalp )
 				if ( sphIsSpace ( m_pTokenizer->GetTokenStart() [ -1 ] ) )
 					continue;
 
+				// right after overshort
+				if ( m_pTokenizer->GetOvershortCount()==1 )
+				{
+					m_iPendingNulls = 0;
+					lvalp->pNode = AddKeyword ( NULL, iSkippedPosBeforeToken );
+					return TOK_KEYWORD;
+				}
+
 				Warning ( "modifiers must be applied to keywords, not operators" );
 
 				// this special is handled in HandleModifiers()
@@ -1530,27 +1546,30 @@ void XQParser_t::PhraseShiftQpos ( XQNode_t * pNode )
 	const int * pLast = m_dPhraseStar.Begin();
 	const int * pEnd = m_dPhraseStar.Begin() + m_dPhraseStar.GetLength();
 	int iQposShiftStart = *pLast;
-	int iQposShift = 1;
+	int iQposShift = 0;
+	int iLastStarPos = *pLast;
 
 	ARRAY_FOREACH ( iWord, pNode->m_dWords )
 	{
 		XQKeyword_t & tWord = pNode->m_dWords[iWord];
 
+		// fold stars in phrase till current term position
+		while ( pLast<pEnd && *(pLast)<=tWord.m_iAtomPos )
+		{
+			iLastStarPos = *pLast;
+			pLast++;
+			iQposShift++;
+		}
+
 		// star dictionary passes raw star however regular dictionary suppress it
 		// raw star also might be suppressed by min_word_len option
 		// so remove qpos shift from duplicated raw star term
-		if ( tWord.m_sWord.IsEmpty() || tWord.m_sWord=="*" )
+		// however not stopwords that is also term with empty word
+		if ( tWord.m_sWord=="*" || ( tWord.m_sWord.IsEmpty() && tWord.m_iAtomPos==iLastStarPos ) )
 		{
 			pNode->m_dWords.Remove ( iWord-- );
 			iQposShift--;
 			continue;
-		}
-
-		// fold stars in phrase till current term position
-		while ( pLast+1<pEnd && *(pLast+1)<=tWord.m_iAtomPos )
-		{
-			pLast++;
-			iQposShift++;
 		}
 
 		if ( iQposShiftStart<=tWord.m_iAtomPos )
@@ -1587,7 +1606,7 @@ static bool CheckQuorumProximity ( XQNode_t * pNode, CSphString * pError )
 }
 
 
-static void FixupDegenerates ( XQNode_t * pNode )
+static void FixupDegenerates ( XQNode_t * pNode, CSphString & sWarning )
 {
 	if ( !pNode )
 		return;
@@ -1595,12 +1614,15 @@ static void FixupDegenerates ( XQNode_t * pNode )
 	if ( pNode->m_dWords.GetLength()==1 &&
 		( pNode->GetOp()==SPH_QUERY_PHRASE || pNode->GetOp()==SPH_QUERY_PROXIMITY || pNode->GetOp()==SPH_QUERY_QUORUM ) )
 	{
+		if ( pNode->GetOp()==SPH_QUERY_QUORUM && !pNode->m_bPercentOp && pNode->m_iOpArg>1 )
+			sWarning.SetSprintf ( "quorum threshold too high (words=%d, thresh=%d); replacing quorum operator with AND operator", pNode->m_dWords.GetLength(), pNode->m_iOpArg );
+
 		pNode->SetOp ( SPH_QUERY_AND );
 		return;
 	}
 
 	ARRAY_FOREACH ( i, pNode->m_dChildren )
-		FixupDegenerates ( pNode->m_dChildren[i] );
+		FixupDegenerates ( pNode->m_dChildren[i], sWarning );
 }
 
 void XQParser_t::FixupDestForms ()
@@ -1622,7 +1644,9 @@ void XQParser_t::FixupDestForms ()
 
 		// FIXME: what about whildcard?
 		bool bExact = ( tKeyword.m_sWord.Length()>1 && tKeyword.m_sWord.cstr()[0]=='=' );
+		bool bFieldStart = tKeyword.m_bFieldStart;
 		bool bFieldEnd = tKeyword.m_bFieldEnd;
+		tKeyword.m_bFieldStart = false;
 		tKeyword.m_bFieldEnd = false;
 
 		XQNode_t * pMultiHead = new XQNode_t ( pMultiParent->m_dSpec );
@@ -1645,7 +1669,8 @@ void XQParser_t::FixupDestForms ()
 			dForms.Add ( pMulti );
 		}
 
-		// move field end modifier to last word
+		// fix-up field start\end modifier
+		dForms[0]->m_dWords[0].m_bFieldStart = bFieldStart;
 		dForms.Last()->m_dWords[0].m_bFieldEnd = bFieldEnd;
 
 		pMultiParent->SetOp ( SPH_QUERY_AND, dForms );
@@ -1695,7 +1720,7 @@ bool XQParser_t::Parse ( XQQuery_t & tParsed, const char * sQuery, const CSphQue
 	m_pPlugin = NULL;
 	m_pPluginData = NULL;
 
-	if ( pQuery && pQuery->m_sQueryTokenFilterName.cstr() )
+	if ( pQuery && !pQuery->m_sQueryTokenFilterName.IsEmpty() )
 	{
 		CSphString sError;
 		m_pPlugin = static_cast < PluginQueryTokenFilter_c * > ( sphPluginAcquire ( pQuery->m_sQueryTokenFilterLib.cstr(),
@@ -1755,7 +1780,7 @@ bool XQParser_t::Parse ( XQQuery_t & tParsed, const char * sQuery, const CSphQue
 	FixupDestForms ();
 	DeleteNodesWOFields ( m_pRoot );
 	m_pRoot = SweepNulls ( m_pRoot );
-	FixupDegenerates ( m_pRoot );
+	FixupDegenerates ( m_pRoot, m_pParsed->m_sParseWarning );
 	FixupNulls ( m_pRoot );
 
 	if ( !FixupNots ( m_pRoot ) )
@@ -4258,18 +4283,18 @@ void CSphTransformation::Dump ()
 	m_hSimilar.IterateStart();
 	while ( m_hSimilar.IterateNext() )
 	{
-		printf ( "\nnode: hash 0x"UINT64_FMT"\n", m_hSimilar.IterateGetKey() );
+		printf ( "\nnode: hash 0x" UINT64_FMT "\n", m_hSimilar.IterateGetKey() );
 		m_hSimilar.IterateGet().IterateStart();
 		while ( m_hSimilar.IterateGet().IterateNext() )
 		{
 			CSphVector<XQNode_t *> & dNodes = m_hSimilar.IterateGet().IterateGet();
-			printf ( "\tgrand: hash 0x"UINT64_FMT", children %d\n", m_hSimilar.IterateGet().IterateGetKey(), dNodes.GetLength() );
+			printf ( "\tgrand: hash 0x" UINT64_FMT ", children %d\n", m_hSimilar.IterateGet().IterateGetKey(), dNodes.GetLength() );
 
 			printf ( "\tparents:\n" );
 			ARRAY_FOREACH ( i, dNodes )
 			{
 				uint64_t uParentHash = dNodes[i]->GetHash();
-				printf ( "\t\thash 0x"UINT64_FMT"\n", uParentHash );
+				printf ( "\t\thash 0x" UINT64_FMT "\n", uParentHash );
 			}
 		}
 	}

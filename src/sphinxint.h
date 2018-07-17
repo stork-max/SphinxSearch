@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -307,6 +307,7 @@ public:
 	bool					GetErrorFlag () const		{ return m_bError; }
 	const CSphString &		GetErrorMessage () const	{ return m_sError; }
 	const CSphString &		GetFilename() const			{ return m_sFilename; }
+	void					ResetError();
 
 #if USE_64BIT
 	SphDocID_t	GetDocid ()		{ return GetOffset(); }
@@ -1252,6 +1253,32 @@ inline int sphUTF8Len ( const char * pStr, int iMax )
 	return iRes;
 }
 
+/// quick check for UTF-8
+inline bool sphIsUTF8 ( const char * pStr )
+{
+	while ( *pStr )
+	{
+		if ( *pStr < 0 )
+			return true;
+		pStr++;
+	}
+	return false;
+}
+
+/// convert UTF-8 to codepoints, return string length
+inline int sphUTF8ToWideChar ( const char * pSrc, int * pDst, int iMaxLen )
+{
+	const BYTE * p = (const BYTE*) pSrc;
+	int iLen = 0, iCode;
+	while ( ( iCode = sphUTF8Decode(p) )!=0 && iLen<iMaxLen )
+	{
+		*pDst++ = iCode;
+		iLen++;
+	}
+	*pDst = 0;
+	return iLen;
+}
+
 //////////////////////////////////////////////////////////////////////////
 // MATCHING ENGINE INTERNALS
 //////////////////////////////////////////////////////////////////////////
@@ -1510,6 +1537,7 @@ public:
 
 	virtual SphWordID_t	GetWordID ( const BYTE * pWord, int iLen, bool bFilterStops ) { return m_pDict->GetWordID ( pWord, iLen, bFilterStops ); }
 	virtual SphWordID_t GetWordID ( BYTE * pWord );
+	virtual SphWordID_t	GetWordIDNonStemmed ( BYTE * pWord ) { return m_pDict->GetWordIDNonStemmed ( pWord ); }
 
 	virtual void		Setup ( const CSphDictSettings & ) {}
 	virtual const CSphDictSettings & GetSettings () const { return m_pDict->GetSettings (); }
@@ -1719,6 +1747,8 @@ void			SaveFieldFilterSettings ( CSphWriter & tWriter, ISphFieldFilter * pFieldF
 
 DWORD			ReadVersion ( const char * sPath, CSphString & sError );
 bool			AddFieldLens ( CSphSchema & tSchema, bool bDynamic, CSphString & sError );
+
+void			RebalanceWeights ( const CSphFixedVector<int64_t> & dTimers, WORD * pWeights );
 
 // all indexes should produce same terms for same query
 struct SphWordStatChecker_t
@@ -2192,7 +2222,11 @@ public:
 			// legacy query mode should handle exact form modifier and star wildcard
 			m_pQueryTokenizer = pIndex->GetTokenizer()->Clone ( SPH_CLONE_INDEX );
 			if ( pIndex->IsStarDict() )
+			{
 				m_pQueryTokenizer->AddPlainChar ( '*' );
+				m_pQueryTokenizer->AddPlainChar ( '?' );
+				m_pQueryTokenizer->AddPlainChar ( '%' );
+			}
 			if ( pIndex->GetSettings().m_bIndexExactWords )
 				m_pQueryTokenizer->AddPlainChar ( '=' );
 		}

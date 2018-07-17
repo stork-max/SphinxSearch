@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -2921,8 +2921,8 @@ public:
 		case JSON_OBJECT:
 		case JSON_MIXED_VECTOR:
 			iLen = sphJsonUnpackInt ( &pValue );
-			uGroupkey = iLen==1 ? 0 : sphFNV64 ( pValue, iLen );
-			return this->PushEx ( tMatch, uGroupkey, false, false, iLen==1 ? 0: &iValue );
+			uGroupkey = ( iLen==1 && eRes!=JSON_STRING ) ? 0 : sphFNV64 ( pValue, iLen );
+			return this->PushEx ( tMatch, uGroupkey, false, false, ( iLen==1 && eRes!=JSON_STRING ) ? 0: &iValue );
 		case JSON_STRING_VECTOR:
 			{
 				sphJsonUnpackInt ( &pValue );
@@ -3497,8 +3497,8 @@ static const int MAX_SORT_FIELDS = 5; // MUST be in sync with CSphMatchComparato
 class SortClauseTokenizer_t
 {
 protected:
-	char * m_pCur;
-	char * m_pMax;
+	const char * m_pCur;
+	const char * m_pMax;
 	char * m_pBuf;
 
 protected:
@@ -3549,6 +3549,31 @@ public:
 		while ( *m_pCur )
 			m_pCur++;
 		return sRes;
+	}
+
+	bool IsSparseCount ( const char * sTok )
+	{
+		const char * sSeq = "(*)";
+		for ( ; sTok<m_pMax && *sSeq; sTok++ )
+		{
+			bool bGotSeq = ( *sSeq==*sTok );
+			if ( bGotSeq )
+				sSeq++;
+
+			// stop checking on any non space char outside sequence or sequence end
+			if ( ( !bGotSeq && !sphIsSpace ( *sTok ) && *sTok!='\0' ) || !*sSeq )
+				break;
+		}
+
+		if ( !*sSeq && sTok+1<m_pMax && !sTok[1] )
+		{
+			// advance token iterator after composite count(*) token
+			m_pCur = sTok+1;
+			return true;
+		} else
+		{
+			return false;
+		}
 	}
 };
 
@@ -3636,9 +3661,20 @@ ESortClauseParseResult sphParseSortClause ( const CSphQuery * pQuery, const char
 				pTok = "@count";
 			else if ( !strcasecmp ( pTok, "facet()" ) )
 				pTok = "@groupby"; // facet() is essentially a @groupby alias
+			else if ( strcasecmp ( pTok, "count" )>=0 && tTok.IsSparseCount ( pTok + sizeof ( "count" ) - 1 ) ) // epression count(*) with various spaces
+				pTok = "@count";
+
 
 			// try to lookup plain attr in sorter schema
 			int iAttr = tSchema.GetAttrIndex ( pTok );
+
+			// do not order by mva (the result is undefined)
+			if ( iAttr>=0 && ( tSchema.GetAttr ( iAttr ).m_eAttrType==SPH_ATTR_UINT32SET
+				|| tSchema.GetAttr ( iAttr ).m_eAttrType==SPH_ATTR_INT64SET ) )
+			{
+				sError.SetSprintf ( "order by MVA is undefined" );
+				return SORT_CLAUSE_ERROR;
+			}
 
 			// try to lookup aliased count(*) and aliased groupby() in select items
 			if ( iAttr<0 )
@@ -4056,6 +4092,11 @@ static bool SetupGroupbySettings ( const CSphQuery * pQuery, const ISphSchema & 
 				{
 					iGroupBy = tSchema.GetAttrIndex ( pQuery->m_dItems[i].m_sAlias.cstr() );
 					break;
+
+				} else if ( pQuery->m_sGroupBy==pQuery->m_dItems[i].m_sAlias )
+				{
+					iGroupBy = tSchema.GetAttrIndex ( pQuery->m_dItems[i].m_sExpr.cstr() );
+					break;
 				}
 		}
 
@@ -4074,9 +4115,8 @@ static bool SetupGroupbySettings ( const CSphQuery * pQuery, const ISphSchema & 
 			case SPH_GROUPBY_MONTH:		tSettings.m_pGrouper = new CSphGrouperMonth ( tLoc ); break;
 			case SPH_GROUPBY_YEAR:		tSettings.m_pGrouper = new CSphGrouperYear ( tLoc ); break;
 			case SPH_GROUPBY_ATTR:
-				if ( eType==SPH_ATTR_JSON )
+				if ( eType==SPH_ATTR_JSON || eType==SPH_ATTR_JSON_FIELD )
 				{
-					// allow group by top-level json array
 					ISphExpr * pExpr = sphExprParse ( pQuery->m_sGroupBy.cstr(), tSchema, NULL, NULL, sError, NULL, pQuery->m_eCollation );
 					tSettings.m_pGrouper = new CSphGrouperJsonField ( tLoc, pExpr );
 					tSettings.m_bJson = true;
@@ -5152,10 +5192,35 @@ ISphMatchSorter * sphCreateQueue ( SphQueueSettings_t & tQueue )
 	}
 
 	// check for HAVING constrains
-	if ( tQueue.m_pAggrFilter && !tQueue.m_pAggrFilter->m_sAttrName.IsEmpty() && !bGotGroupby )
+	if ( tQueue.m_pAggrFilter && !tQueue.m_pAggrFilter->m_sAttrName.IsEmpty() )
 	{
-		sError.SetSprintf ( "can not use HAVING without group by" );
-		return NULL;
+		if ( !bGotGroupby )
+		{
+			sError.SetSprintf ( "can not use HAVING without GROUP BY" );
+			return NULL;
+		}
+
+		// should be column named at group by or it's alias or aggregate
+		const CSphString & sHaving = tQueue.m_pAggrFilter->m_sAttrName;
+		if ( !IsGroupbyMagic ( sHaving ) )
+		{
+			bool bValidHaving = false;
+			ARRAY_FOREACH ( i, pQuery->m_dItems )
+			{
+				const CSphQueryItem & tItem = pQuery->m_dItems[i];
+				if ( tItem.m_sAlias!=sHaving )
+					continue;
+
+				bValidHaving = ( IsGroupbyMagic ( tItem.m_sExpr ) || tItem.m_eAggrFunc!=SPH_AGGR_NONE );
+				break;
+			}
+
+			if ( !bValidHaving )
+			{
+				sError.SetSprintf ( "can not use HAVING with attribute not related to GROUP BY" );
+				return NULL;
+			}
+		}
 	}
 
 	// now lets add @groupby etc if needed

@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -244,7 +244,7 @@ protected:
 		return iCount ? m_dDocs : NULL;
 	}
 
-	inline const ExtHit_t * ReturnHitsChunk ( int iCount, const char * sNode )
+	inline const ExtHit_t * ReturnHitsChunk ( int iCount, const char * sNode, bool bReverse )
 	{
 		assert ( iCount>=0 && iCount<MAX_HITS );
 		m_dHits[iCount].m_uDocid = DOCID_MAX;
@@ -252,8 +252,9 @@ protected:
 #ifndef NDEBUG
 		for ( int i=1; i<iCount; i++ )
 		{
+			bool bQPosPassed = ( ( bReverse && m_dHits[i-1].m_uQuerypos>=m_dHits[i].m_uQuerypos ) || ( !bReverse && m_dHits[i-1].m_uQuerypos<=m_dHits[i].m_uQuerypos ) );
 			assert ( m_dHits[i-1].m_uDocid!=m_dHits[i].m_uDocid ||
-					( m_dHits[i-1].m_uHitpos<m_dHits[i].m_uHitpos || ( m_dHits[i-1].m_uHitpos==m_dHits[i].m_uHitpos && m_dHits[i-1].m_uQuerypos<=m_dHits[i].m_uQuerypos ) ) );
+					( m_dHits[i-1].m_uHitpos<m_dHits[i].m_uHitpos || ( m_dHits[i-1].m_uHitpos==m_dHits[i].m_uHitpos && bQPosPassed ) ) );
 		}
 #endif
 
@@ -568,12 +569,20 @@ protected:
 class ExtAnd_c : public ExtTwofer_c
 {
 public:
-								ExtAnd_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup ) : ExtTwofer_c ( pFirst, pSecond, tSetup ) {}
-								ExtAnd_c() {} ///< to be used with Init()
+								ExtAnd_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup ) : ExtTwofer_c ( pFirst, pSecond, tSetup ), m_bQPosReverse ( false ) {}
+								ExtAnd_c() : m_bQPosReverse ( false ) {} ///< to be used with Init()
 	virtual const ExtDoc_t *	GetDocsChunk();
 	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 
 	void DebugDump ( int iLevel ) { DebugDumpT ( "ExtAnd", iLevel ); }
+
+	void SetQPosReverse ()
+	{
+		m_bQPosReverse = true;
+	}
+
+protected:
+	bool m_bQPosReverse;
 };
 
 class ExtAndZonespanned_c : public ExtAnd_c
@@ -683,6 +692,8 @@ protected:
 			pCurEx->SetNodePos ( uLPos, uRPos );
 			uLPos = 0;
 		}
+		if ( pCurEx )
+			pCurEx->SetQPosReverse();
 		m_pNode = pCur;
 	}
 };
@@ -887,8 +898,6 @@ public:
 
 	static int					GetThreshold ( const XQNode_t & tNode, int iQwords );
 
-private:
-
 	struct TermTuple_t
 	{
 		ExtNode_i *			m_pTerm;		///< my children nodes (simply ExtTerm_c for now, not true anymore)
@@ -897,6 +906,8 @@ private:
 		int					m_iCount;		///< terms count in case of dupes
 		bool				m_bStandStill;	///< should we emit hits to proceed further
 	};
+
+private:
 
 	ExtHit_t					m_dQuorumHits[MAX_HITS];	///< buffer for all my quorum hits; inherited m_dHits will receive filtered results
 	int							m_iMyHitCount;				///< hits collected so far
@@ -1770,7 +1781,9 @@ ExtNode_i * ExtNode_i::Create ( const XQNode_t * pNode, const ISphQwordSetup & t
 			{
 				assert ( pNode->m_dWords.GetLength()==0 || pNode->m_dChildren.GetLength()==0 );
 				int iQuorumCount = pNode->m_dWords.GetLength()+pNode->m_dChildren.GetLength();
-				if ( ExtQuorum_c::GetThreshold ( *pNode, iQuorumCount )>=iQuorumCount )
+				int iThr = ExtQuorum_c::GetThreshold ( *pNode, iQuorumCount );
+				bool bOrOperator = false;
+				if ( iThr>=iQuorumCount )
 				{
 					// threshold is too high
 					if ( tSetup.m_pWarning && !pNode->m_bPercentOp )
@@ -1782,7 +1795,9 @@ ExtNode_i * ExtNode_i::Create ( const XQNode_t * pNode, const ISphQwordSetup & t
 					// right now quorum can only handle 256 words
 					if ( tSetup.m_pWarning )
 						tSetup.m_pWarning->SetSprintf ( "too many words (%d) for quorum; replacing with an AND", iQuorumCount );
-
+				} else if ( iThr==1 )
+				{
+					bOrOperator = true;
 				} else // everything is ok; create quorum node
 				{
 					return CreateMultiNode<ExtQuorum_c> ( pNode, tSetup, false );
@@ -1803,7 +1818,12 @@ ExtNode_i * ExtNode_i::Create ( const XQNode_t * pNode, const ISphQwordSetup & t
 
 				ExtNode_i * pCur = dTerms[0];
 				for ( int i=1; i<dTerms.GetLength(); i++ )
-					pCur = new ExtAnd_c ( pCur, dTerms[i], tSetup );
+				{
+					if ( !bOrOperator )
+						pCur = new ExtAnd_c ( pCur, dTerms[i], tSetup );
+					else
+						pCur = new ExtOr_c ( pCur, dTerms[i], tSetup );
+				}
 
 				if ( pNode->GetCount() )
 					return tSetup.m_pNodeCache->CreateProxy ( pCur, pNode, tSetup );
@@ -1820,8 +1840,14 @@ ExtNode_i * ExtNode_i::Create ( const XQNode_t * pNode, const ISphQwordSetup & t
 		assert ( iChildren>0 );
 
 		// special case, operator BEFORE
-		if ( pNode->GetOp()==SPH_QUERY_BEFORE )
+		if ( pNode->GetOp ()==SPH_QUERY_BEFORE )
+		{
+			// before operator can not handle ZONESPAN
+			bool bZoneSpan = ARRAY_ANY ( bZoneSpan, pNode->m_dChildren, pNode->m_dChildren[_any]->m_dSpec.m_bZoneSpan );
+			if ( bZoneSpan && tSetup.m_pWarning )
+				tSetup.m_pWarning->SetSprintf ( "BEFORE operator is incompatible with ZONESPAN, ZONESPAN ignored" );
 			return CreateOrderNode ( pNode, tSetup );
+		}
 
 		// special case, AND over terms (internally reordered for speed)
 		bool bAndTerms = ( pNode->GetOp()==SPH_QUERY_AND );
@@ -2133,7 +2159,7 @@ const ExtHit_t * ExtTerm_c::GetHitsChunk ( const ExtDoc_t * pMatched )
 	if ( m_pNanoBudget )
 		*m_pNanoBudget -= g_iPredictorCostHit*iHit;
 
-	return ReturnHitsChunk ( iHit, "term" );
+	return ReturnHitsChunk ( iHit, "term", false );
 }
 
 int ExtTerm_c::GetQwords ( ExtQwordsHash_t & hQwords )
@@ -2220,6 +2246,17 @@ const ExtHit_t * ExtTermHitless_c::GetHitsChunk ( const ExtDoc_t * pMatched )
 	// hit emission
 	int iHit = 0;
 	m_bTail = false;
+	DWORD uMaxFields = SPH_MAX_FIELDS;
+	if ( !m_bHasWideFields )
+	{
+		uMaxFields = 0;
+		DWORD uFields = pDoc->m_uDocFields;
+		while ( uFields ) // count up to highest bit, max value is 32
+		{
+			uFields >>= 1;
+			uMaxFields++;
+		}
+	}
 	for ( ;; )
 	{
 		if ( ( m_uFieldPos<32 && ( pDoc->m_uDocFields & ( 1 << m_uFieldPos ) ) ) // not necessary
@@ -2236,7 +2273,7 @@ const ExtHit_t * ExtTermHitless_c::GetHitsChunk ( const ExtDoc_t * pMatched )
 				break;
 		}
 
-		if ( m_uFieldPos<SPH_MAX_FIELDS-1 )
+		if ( m_uFieldPos<uMaxFields-1 )
 		{
 			m_uFieldPos++;
 			continue;
@@ -2545,6 +2582,8 @@ const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDoc
 		m_uDoneFor = ( pDocs-1 )->m_uDocid;
 		m_uHitStartDocid = pStart->m_uDocid;
 	}
+	if ( iFilteredHits && m_dFilteredHits[iFilteredHits-1].m_uDocid>m_uDoneFor )
+		m_uDoneFor = m_dFilteredHits[iFilteredHits-1].m_uDocid;
 
 	PrintHitsChunk ( iFilteredHits, ExtBase::m_iAtomPos, m_dFilteredHits, "cond", this );
 
@@ -2684,6 +2723,15 @@ const ExtDoc_t * ExtAnd_c::GetDocsChunk()
 	return ReturnDocsChunk ( iDoc, "and" );
 }
 
+struct CmpAndHitReverse_fn
+{
+	inline bool IsLess ( const ExtHit_t & a, const ExtHit_t & b ) const
+	{
+		return ( a.m_uDocid<b.m_uDocid || ( a.m_uDocid==b.m_uDocid && a.m_uHitpos<b.m_uHitpos ) || ( a.m_uDocid==b.m_uDocid && a.m_uHitpos==b.m_uHitpos && a.m_uQuerypos>b.m_uQuerypos ) );
+	}
+};
+
+
 const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	const ExtHit_t * pCur0 = m_pCurHit[0];
@@ -2707,7 +2755,7 @@ const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 				while ( iHit<MAX_HITS-1 )
 			{
 				if ( ( pCur0->m_uHitpos < pCur1->m_uHitpos )
-					|| ( pCur0->m_uHitpos==pCur1->m_uHitpos && pCur0->m_uQuerypos>pCur1->m_uQuerypos ) )
+					|| ( pCur0->m_uHitpos==pCur1->m_uHitpos && pCur0->m_uQuerypos<=pCur1->m_uQuerypos ) )
 				{
 					m_dHits[iHit] = *pCur0++;
 					if ( uNodePos0!=0 )
@@ -2795,9 +2843,10 @@ const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 	m_pCurHit[0] = pCur0;
 	m_pCurHit[1] = pCur1;
 
-	assert ( iHit>=0 && iHit<MAX_HITS );
-	m_dHits[iHit].m_uDocid = DOCID_MAX;
-	return iHit ? m_dHits : NULL;
+	if ( iHit && m_bQPosReverse )
+		sphSort ( m_dHits, iHit, CmpAndHitReverse_fn() );
+
+	return ReturnHitsChunk ( iHit, "and", m_bQPosReverse );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2840,7 +2889,7 @@ const ExtHit_t * ExtAndZonespanned_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 				while ( iHit<MAX_HITS-1 )
 				{
 					if ( ( pCur0->m_uHitpos < pCur1->m_uHitpos )
-						|| ( pCur0->m_uHitpos==pCur1->m_uHitpos && pCur0->m_uQuerypos>pCur1->m_uQuerypos ) )
+						|| ( pCur0->m_uHitpos==pCur1->m_uHitpos && pCur0->m_uQuerypos<=pCur1->m_uQuerypos ) )
 					{
 						if ( IsSameZonespan ( pCur0, pCur1 ) )
 						{
@@ -2928,7 +2977,10 @@ const ExtHit_t * ExtAndZonespanned_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 	m_pCurHit[0] = pCur0;
 	m_pCurHit[1] = pCur1;
 
-	return ReturnHitsChunk ( iHit, "and-zonespan" );
+	if ( iHit && m_bQPosReverse )
+		sphSort ( m_dHits, iHit, CmpAndHitReverse_fn() );
+
+	return ReturnHitsChunk ( iHit, "and-zonespan", m_bQPosReverse );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3103,7 +3155,7 @@ const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 	m_pCurHit[0] = pCur0;
 	m_pCurHit[1] = pCur1;
 
-	return ReturnHitsChunk ( iHit, "or" );
+	return ReturnHitsChunk ( iHit, "or", false );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3980,6 +4032,15 @@ struct QuorumDupeNodeHash_t
 	}
 };
 
+struct QuorumNodeAtomPos_fn
+{
+	inline bool IsLess ( const ExtQuorum_c::TermTuple_t & a, const ExtQuorum_c::TermTuple_t & b ) const
+	{
+		return a.m_pTerm->m_iAtomPos<b.m_pTerm->m_iAtomPos;
+	}
+};
+
+
 ExtQuorum_c::ExtQuorum_c ( CSphVector<ExtNode_i*> & dQwords, const XQNode_t & tNode, const ISphQwordSetup & tSetup )
 {
 	assert ( tNode.GetOp()==SPH_QUERY_QUORUM );
@@ -4032,6 +4093,9 @@ ExtQuorum_c::ExtQuorum_c ( CSphVector<ExtNode_i*> & dQwords, const XQNode_t & tN
 				m_bHasDupes = true;
 			}
 		}
+
+		// sort back to qpos order
+		m_dInitialChildren.Sort ( QuorumNodeAtomPos_fn() );
 	}
 
 	ARRAY_FOREACH ( i, m_dInitialChildren )
@@ -4240,7 +4304,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkDupesTail ()
 			m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( dTailDocs );
 	}
 
-	return ReturnHitsChunk ( iHit, "quorum-dupes-tail" );
+	return ReturnHitsChunk ( iHit, "quorum-dupes-tail", false );
 }
 
 struct QuorumCmpHitPos_fn
@@ -4319,7 +4383,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkDupes ( const ExtDoc_t * pDocs )
 			m_uMatchedDocid = uDocid;
 	}
 
-	return ReturnHitsChunk ( iHit, "quorum-dupes" );
+	return ReturnHitsChunk ( iHit, "quorum-dupes", false );
 }
 
 const ExtHit_t * ExtQuorum_c::GetHitsChunkSimple ( const ExtDoc_t * pDocs )
@@ -4416,7 +4480,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkSimple ( const ExtDoc_t * pDocs )
 			m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( pDocs );
 	}
 
-	return ReturnHitsChunk ( iHit, "quorum-simple" );
+	return ReturnHitsChunk ( iHit, "quorum-simple", false );
 }
 
 int ExtQuorum_c::GetThreshold ( const XQNode_t & tNode, int iQwords )
@@ -6163,8 +6227,8 @@ int ExtRanker_T<STATE>::GetMatches ()
 			if ( !pDocs )
 				break;
 
-			// we do, get some hits
-			pHlist = m_pRoot->GetHitsChunk ( pDocs );
+			// we do, get some hits with proper profile
+			pHlist = RankerGetHits ( pProfile, m_pRoot, pDocs );
 			assert ( pHlist ); // fresh docs block, must have hits
 		}
 
@@ -6266,7 +6330,7 @@ struct RankerState_Proximity_fn : public ISphExtra
 
 			// and check if that results in a better lcs match now
 			int iDelta = m_uCurPos - m_uLcsTailPos;
-			if ( ( m_uCurQposMask >> iDelta ) & m_uLcsTailQposMask )
+			if ( iDelta && iDelta<32 && ( m_uCurQposMask >> iDelta ) & m_uLcsTailQposMask )
 			{
 				// cool, it matched!
 				m_uLcsTailQposMask = ( 1UL << pHlist->m_uQuerypos ); // our lcs span now ends with a specific qpos
@@ -8107,7 +8171,7 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 
 		// and check if that results in a better lcs match now
 		int iDelta = ( m_uCurPos-m_uLcsTailPos );
-		if ( iDelta && ( m_uCurQposMask >> iDelta ) & m_uLcsTailQposMask )
+		if ( iDelta && iDelta<32 && ( m_uCurQposMask >> iDelta ) & m_uLcsTailQposMask )
 		{
 			// cool, it matched!
 			m_uLcsTailQposMask = ( 1UL << pHlist->m_uQuerypos ); // our lcs span now ends with a specific qpos
@@ -8702,7 +8766,7 @@ float RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::TermTC ( int iTerm,
 		if ( m_dAtcProcessedTerms.BitGet ( tCur.m_uQuerypos ) || iHitpos==tCur.m_iHitpos )
 			continue;
 
-		float fWeightedDist = pow ( float ( abs ( iHitpos - tCur.m_iHitpos ) ), XRANK_ATC_EXP );
+		float fWeightedDist = (float)pow ( float ( abs ( iHitpos - tCur.m_iHitpos ) ), XRANK_ATC_EXP );
 		float fTermTC = ( m_dIDF[tCur.m_uQuerypos] / fWeightedDist );
 		if ( bGotDup )
 			fTermTC *= XRANK_ATC_DUP_DIV;
@@ -8751,7 +8815,7 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::UpdateATC ( bool bFl
 			m_dAtcTerms[i] = 0.0f;
 		}
 
-		m_dAtc[m_uAtcField] = log ( 1.0f + fWeightedSum );
+		m_dAtc[m_uAtcField] = (float)log ( 1.0f + fWeightedSum );
 		m_iAtcHitStart = 0;
 		m_iAtcHitCount = 0;
 		m_bAtcHeadProcessed = false;
@@ -9025,6 +9089,7 @@ ISphRanker * sphCreateRanker ( const XQQuery_t & tXQ, const CSphQuery * pQuery, 
 			tTermSetup.m_bSetQposMask = true;
 			pRanker = new ExtRanker_Export_c ( tXQ, tTermSetup, pQuery->m_sRankerExpr.cstr(), pIndex->GetMatchSchema() );
 			break;
+
 		default:
 			pResult->m_sWarning.SetSprintf ( "unknown ranking mode %d; using default", (int)pQuery->m_eRanker );
 			if ( bGotDupes )
@@ -9032,13 +9097,25 @@ ISphRanker * sphCreateRanker ( const XQQuery_t & tXQ, const CSphQuery * pQuery, 
 			else
 				pRanker = new ExtRanker_T < RankerState_Proximity_fn<true,false> > ( tXQ, tTermSetup );
 			break;
+
 		case SPH_RANK_PLUGIN:
 			{
 				const PluginRanker_c * p = (const PluginRanker_c *) sphPluginGet ( PLUGIN_RANKER, pQuery->m_sUDRanker.cstr() );
-				assert ( p );
-				pRanker = new ExtRanker_T < RankerState_Plugin_fn > ( tXQ, tTermSetup );
-				pRanker->ExtraData ( EXTRA_SET_RANKER_PLUGIN, (void**)p );
-				pRanker->ExtraData ( EXTRA_SET_RANKER_PLUGIN_OPTS, (void**)pQuery->m_sUDRankerOpts.cstr() );
+				// might be a case for query to distributed index
+				if ( p )
+				{
+					pRanker = new ExtRanker_T < RankerState_Plugin_fn > ( tXQ, tTermSetup );
+					pRanker->ExtraData ( EXTRA_SET_RANKER_PLUGIN, (void**)p );
+					pRanker->ExtraData ( EXTRA_SET_RANKER_PLUGIN_OPTS, (void**)pQuery->m_sUDRankerOpts.cstr() );
+				} else
+				{
+					// create default ranker in case of missed plugin
+					pResult->m_sWarning.SetSprintf ( "unknown ranker plugin '%s'; using default", pQuery->m_sUDRanker.cstr() );
+					if ( bGotDupes )
+						pRanker = new ExtRanker_T < RankerState_Proximity_fn<true,true> > ( tXQ, tTermSetup );
+					else
+						pRanker = new ExtRanker_T < RankerState_Proximity_fn<true,false> > ( tXQ, tTermSetup );
+				}
 			}
 			break;
 	}

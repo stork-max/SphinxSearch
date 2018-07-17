@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -46,7 +46,8 @@ inline bool sphIsModifier ( int iSymbol )
 
 
 /// all wildcards
-inline bool sphIsWild ( char c )
+template < typename T >
+inline bool sphIsWild ( T c )
 {
 	return c=='*' || c=='?' || c=='%';
 }
@@ -59,7 +60,7 @@ void sphSplit ( CSphVector<CSphString> & dOut, const char * sIn );
 void sphSplit ( CSphVector<CSphString> & dOut, const char * sIn, const char * sBounds );
 
 /// string wildcard matching (case-sensitive, supports * and ? patterns)
-bool sphWildcardMatch ( const char * sSstring, const char * sPattern );
+bool sphWildcardMatch ( const char * sSstring, const char * sPattern, const int * pPattern = NULL );
 
 //////////////////////////////////////////////////////////////////////////
 

@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -123,6 +123,9 @@ public:
 	/// run a tree wide action (1st arg is an action, 2nd is its parameter)
 	/// usually sets something into ISphExpr like string pool or gets something from it like dependent columns
 	virtual void Command ( ESphExprCommand, void * ) {}
+
+	/// check for const type
+	virtual bool IsConst () const { return false; }
 };
 
 /// string expression traits

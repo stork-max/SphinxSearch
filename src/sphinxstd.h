@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -19,6 +19,10 @@
 #if _MSC_VER>=1400
 #define _CRT_SECURE_NO_DEPRECATE 1
 #define _CRT_NONSTDC_NO_DEPRECATE 1
+#endif
+
+#if _MSC_VER>=1600
+#define HAVE_STDINT_H 1
 #endif
 
 #if (_MSC_VER>=1000) && !defined(__midl) && defined(_PREFAST_)
@@ -2400,10 +2404,10 @@ public:
 		if ( pData==MAP_FAILED )
 		{
 			if ( iLength>(int64_t)0x7fffffffUL )
-				sError.SetSprintf ( "mmap() failed: %s (length="INT64_FMT" is over 2GB, impossible on some 32-bit systems)",
+				sError.SetSprintf ( "mmap() failed: %s (length=" INT64_FMT " is over 2GB, impossible on some 32-bit systems)",
 					strerror(errno), iLength );
 			else
-				sError.SetSprintf ( "mmap() failed: %s (length="INT64_FMT")", strerror(errno), iLength );
+				sError.SetSprintf ( "mmap() failed: %s (length=" INT64_FMT ")", strerror(errno), iLength );
 			return false;
 		}
 
@@ -2439,9 +2443,9 @@ public:
 			return true;
 
 		if ( sError.IsEmpty() )
-			sError.SetSprintf ( "%s mlock() failed: bytes="INT64_FMT", error=%s", sPrefix, (int64_t)this->GetLengthBytes(), strerror(errno) );
+			sError.SetSprintf ( "%s mlock() failed: bytes=" INT64_FMT ", error=%s", sPrefix, (int64_t)this->GetLengthBytes(), strerror(errno) );
 		else
-			sError.SetSprintf ( "%s; %s mlock() failed: bytes="INT64_FMT", error=%s", sError.cstr(), sPrefix, (int64_t)this->GetLengthBytes(), strerror(errno) );
+			sError.SetSprintf ( "%s; %s mlock() failed: bytes=" INT64_FMT ", error=%s", sError.cstr(), sPrefix, (int64_t)this->GetLengthBytes(), strerror(errno) );
 		return false;
 	}
 #endif
@@ -2543,7 +2547,7 @@ public:
 			pData = (T *)::MapViewOfFile ( hFile, FILE_MAP_READ, 0, 0, 0 );
 			if ( !pData )
 			{
-				sError.SetSprintf ( "failed to map file '%s': (errno %d, length="INT64_FMT")", sFile, ::GetLastError(), (int64_t)tLen.QuadPart );
+				sError.SetSprintf ( "failed to map file '%s': (errno %d, length=" INT64_FMT ")", sFile, ::GetLastError(), (int64_t)tLen.QuadPart );
 				Close();
 				return false;
 			}
@@ -2568,7 +2572,7 @@ public:
 			pData = (T *)mmap ( NULL, iFileSize, PROT_READ, MAP_PRIVATE, iFD, 0 );
 			if ( pData==MAP_FAILED )
 			{
-				sError.SetSprintf ( "failed to mmap file '%s': %s (length="INT64_FMT")", sFile, strerror(errno), iFileSize );
+				sError.SetSprintf ( "failed to mmap file '%s': %s (length=" INT64_FMT ")", sFile, strerror(errno), iFileSize );
 				Close();
 				return false;
 			}

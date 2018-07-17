@@ -3,9 +3,6 @@
 
 <name>ATTACH INDEX</name>
 
-<requires>
-<id32/> <!-- otherwise, 'DESC rt' mismatches between builds -->
-</requires>
 
 <config>
 indexer
@@ -99,6 +96,35 @@ index rt1
 	rt_attr_uint	= gid
 } 
 
+index disk1
+{
+	source			= disk
+	path			= <data_path/>/disk1
+	charset_table	= a..z, A..Z->a..z
+}
+
+index disk2
+{
+	source			= disk
+	path			= <data_path/>/disk2
+	charset_table	= a..z, A..Z->a..z
+}
+
+index disk3
+{
+	source			= disk
+	path			= <data_path/>/disk3
+	charset_table	= a..z, A..Z->a..z
+}
+
+index rt_d1
+{
+	type			= rt
+	path			= data/rt_d1
+	rt_field		= title
+	rt_attr_uint	= gid
+} 
+
 </config>
 
 <db_create>
@@ -127,7 +153,7 @@ INSERT INTO test_table VALUES
 <sphinxql>SELECT * FROM rt</sphinxql>
 <sphinxql>SELECT * FROM disk</sphinxql>
 <sphinxql>SELECT * FROM rt WHERE MATCH('thee')</sphinxql>
-<sphinxql>DESC rt</sphinxql>
+<sphinxql>DESC rt like '_i%'</sphinxql>
 <sphinxql>INSERT INTO rt ( id, gid, title ) VALUES ( 10, 22, 'I dub thee unforgiven' )</sphinxql>
 <sphinxql>SELECT * FROM rt WHERE MATCH('thee')</sphinxql>
 <sphinxql><![CDATA[INSERT INTO rt ( id, gid, title ) VALUES ( 11, 22, 'under_score_again <stuff>but got here</stuff>' )]]></sphinxql>
@@ -145,6 +171,12 @@ INSERT INTO test_table VALUES
 <sphinxql>SELECT * FROM rt1</sphinxql>
 <sphinxql>SELECT * FROM rt1 WHERE MATCH('well')</sphinxql>
 <sphinxql>SELECT * FROM rt1 WHERE MATCH('me | thee')</sphinxql>
+
+<!-- regression duplicates passed from attached plain to existed RT index -->
+<sphinxql>ATTACH INDEX disk1 TO RTINDEX rt_d1</sphinxql>
+<sphinxql>ATTACH INDEX disk2 TO RTINDEX rt_d1</sphinxql>
+<sphinxql>ATTACH INDEX disk3 TO RTINDEX rt_d1</sphinxql>
+<sphinxql>SELECT * FROM rt_d1</sphinxql>
 </sphqueries>
 
 </test>

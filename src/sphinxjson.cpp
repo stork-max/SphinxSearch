@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2011-2015, Andrew Aksyonoff
-// Copyright (c) 2011-2015, Sphinx Technologies Inc
+// Copyright (c) 2011-2016, Andrew Aksyonoff
+// Copyright (c) 2011-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -41,7 +41,7 @@ struct JsonNode_t
 #define YYSTYPE JsonNode_t
 
 // must be included after YYSTYPE declaration
-#include "yysphinxjson.h"
+class JsonParser_c;
 
 /// actually, JSON-to-SphinxBSON converter helper, but who cares
 class JsonParser_c : ISphNoncopyable
@@ -414,7 +414,7 @@ public:
 		switch ( eType )
 		{
 		case JSON_INT32: printf ( "JSON_INT32 %d\n", sphJsonLoadInt ( &p ) ); break;
-		case JSON_INT64: printf ( "JSON_INT64 "INT64_FMT"\n", sphJsonLoadBigint ( &p ) ); break;
+		case JSON_INT64: printf ( "JSON_INT64 " INT64_FMT "\n", sphJsonLoadBigint ( &p ) ); break;
 		case JSON_DOUBLE: printf ( "JSON_DOUBLE %lf\n", sphQW2D ( sphJsonLoadBigint ( &p ) ) ); break;
 		case JSON_STRING:
 			{
@@ -534,10 +534,13 @@ public:
 
 // unused parameter, simply to avoid type clash between all my yylex() functions
 #define YY_NO_UNISTD_H 1
-#define YYLEX_PARAM pParser->m_pScanner, pParser
-#define YY_DECL int yylex ( YYSTYPE * lvalp, void * yyscanner, JsonParser_c * pParser )
+#define YY_DECL static int my_lex ( YYSTYPE * lvalp, void * yyscanner, JsonParser_c * pParser )
 
-#include "llsphinxjson.c"
+#ifdef CMAKE_GENERATED_LEXER
+	#include "flexsphinxjson.c"
+#else
+	#include "llsphinxjson.c"
+#endif
 
 void yyerror ( JsonParser_c * pParser, const char * sMessage )
 {
@@ -545,7 +548,16 @@ void yyerror ( JsonParser_c * pParser, const char * sMessage )
 	pParser->m_sError.SetSprintf ( "%s near '%s'", sMessage, pParser->m_pLastToken );
 }
 
-#include "yysphinxjson.c"
+static int yylex ( YYSTYPE * lvalp, JsonParser_c * pParser )
+{
+	return my_lex ( lvalp, pParser->m_pScanner, pParser );
+}
+
+#ifdef CMAKE_GENERATED_GRAMMAR
+	#include "bissphinxjson.c"
+#else
+	#include "yysphinxjson.c"
+#endif
 
 bool sphJsonParse ( CSphVector<BYTE> & dData, char * sData, bool bAutoconv, bool bToLowercase, CSphString & sError )
 {
@@ -573,6 +585,12 @@ bool sphJsonParse ( CSphVector<BYTE> & dData, char * sData, bool bAutoconv, bool
 	yy2lex_destroy ( tParser.m_pScanner );
 
 	tParser.Finalize();
+
+	if ( dData.GetSizeBytes() >= 0x400000 )
+	{
+		sError = "data exceeds 0x400000 bytes";
+		iRes = -1;
+	}
 
 	if ( iRes!=0 )
 		dData.Reset();

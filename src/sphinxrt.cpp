@@ -3,8 +3,8 @@
 //
 
 //
-// Copyright (c) 2001-2015, Andrew Aksyonoff
-// Copyright (c) 2008-2015, Sphinx Technologies Inc
+// Copyright (c) 2001-2016, Andrew Aksyonoff
+// Copyright (c) 2008-2016, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -1393,7 +1393,7 @@ void RtIndex_t::ForceRamFlush ( bool bPeriodic )
 	Verify ( m_tWriting.Unlock() );
 
 	tmSave = sphMicroTimer() - tmSave;
-	sphInfo ( "rt: index %s: ramchunk saved ok (mode=%s, last TID="INT64_FMT", current TID="INT64_FMT", "
+	sphInfo ( "rt: index %s: ramchunk saved ok (mode=%s, last TID=" INT64_FMT ", current TID=" INT64_FMT ", "
 		"ram=%d.%03d Mb, time delta=%d sec, took=%d.%03d sec)"
 		, m_sIndexName.cstr(), bPeriodic ? "periodic" : "forced"
 		, iWasTID, m_iTID, (int)(iUsedRam/1024/1024), (int)((iUsedRam/1024)%1000)
@@ -1490,7 +1490,7 @@ bool RtIndex_t::AddDocument ( int iFields, const char ** ppFields, const CSphMat
 
 		if ( bGotID )
 		{
-			sError.SetSprintf ( "duplicate id '"UINT64_FMT"'", (uint64_t)tDoc.m_uDocID );
+			sError.SetSprintf ( "duplicate id '" UINT64_FMT "'", (uint64_t)tDoc.m_uDocID );
 			return false; // already exists and not deleted; INSERT fails
 		}
 	}
@@ -3744,7 +3744,7 @@ void RtIndex_t::SaveDiskDataImpl ( const char * sFilename, const SphChunkGuard_t
 		iInfixCheckpointWordsSize = pInfixer->GetBlocksWordsSize();
 
 		if ( iInfixBlockOffset>UINT_MAX )
-			sphWarning ( "INTERNAL ERROR: dictionary size "INT64_FMT" overflow at infix save", iInfixBlockOffset );
+			sphWarning ( "INTERNAL ERROR: dictionary size " INT64_FMT " overflow at infix save", iInfixBlockOffset );
 	}
 
 	// flush header
@@ -4223,7 +4223,7 @@ static bool CheckVectorLength ( int iLen, int64_t iSaneLen, const char * sAt, CS
 	if ( iLen>=0 && iLen<iSaneLen )
 		return true;
 
-	sError.SetSprintf ( "broken index, %s length overflow (len=%d, max="INT64_FMT")", sAt, iLen, iSaneLen );
+	sError.SetSprintf ( "broken index, %s length overflow (len=%d, max=" INT64_FMT ")", sAt, iLen, iSaneLen );
 	return false;
 }
 
@@ -4391,7 +4391,7 @@ bool RtIndex_t::LoadRamChunk ( DWORD uVersion, bool bRebuildInfixes )
 
 	int64_t iFileSize = rdChunk.GetFilesize();
 	int64_t iSaneVecSize = Min ( iFileSize, INT_MAX / 2 );
-	int64_t iSaneTightVecSize = Min ( iFileSize, int( INT_MAX / 1.2f ) );
+	int64_t iSaneTightVecSize = Min ( iFileSize, int ( INT_MAX / 1.2f ) );
 
 	bool bHasMorphology = ( m_pDict && m_pDict->HasMorphology() ); // fresh and old-format index still has no dictionary at this point
 	int iSegmentSeq = rdChunk.GetDword();
@@ -4578,7 +4578,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 		LOC_FAIL(( fp, "wrong attribute stride (current=%d, should_be=%d)", m_iStride, DOCINFO_IDSIZE+m_tSchema.GetRowSize() ));
 
 	if ( m_iSoftRamLimit<=0 )
-		LOC_FAIL(( fp, "wrong RAM limit (current="INT64_FMT")", m_iSoftRamLimit ));
+		LOC_FAIL(( fp, "wrong RAM limit (current=" INT64_FMT ")", m_iSoftRamLimit ));
 
 	if ( m_iLockFD<0 )
 		LOC_FAIL(( fp, "index lock file id < 0" ));
@@ -4587,13 +4587,13 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 		LOC_FAIL(( fp, "disk chunk base < 0" ));
 
 	if ( m_iTID<0 )
-		LOC_FAIL(( fp, "index TID < 0 (current="INT64_FMT")", m_iTID ));
+		LOC_FAIL(( fp, "index TID < 0 (current=" INT64_FMT ")", m_iTID ));
 
 	if ( m_iSavedTID<0 )
-		LOC_FAIL(( fp, "index saved TID < 0 (current="INT64_FMT")", m_iSavedTID ));
+		LOC_FAIL(( fp, "index saved TID < 0 (current=" INT64_FMT ")", m_iSavedTID ));
 
 	if ( m_iTID<m_iSavedTID )
-		LOC_FAIL(( fp, "index TID < index saved TID (current="INT64_FMT", saved="INT64_FMT")", m_iTID, m_iSavedTID ));
+		LOC_FAIL(( fp, "index TID < index saved TID (current=" INT64_FMT ", saved=" INT64_FMT ")", m_iTID, m_iSavedTID ));
 
 	if ( m_iWordsCheckpoint!=RTDICT_CHECKPOINT_V3 && m_iWordsCheckpoint!=RTDICT_CHECKPOINT_V5 )
 		LOC_FAIL(( fp, "unexpected number of words per checkpoint (expected 1024 or 48, got %d)", m_iWordsCheckpoint ));
@@ -4611,6 +4611,12 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 		RtSegment_t & tSegment = *m_dRamChunks[iSegment];
 		if ( tSegment.m_bTlsKlist )
 			LOC_FAIL(( fp, "TLS k-list flag on: index is being commited (segment=%d)", iSegment ));
+
+		if ( !tSegment.m_iRows )
+		{
+			LOC_FAIL(( fp, "empty RT segment (segment=%d)", iSegment ));
+			continue;
+		}
 
 		const BYTE * pCurWord = tSegment.m_dWords.Begin();
 		const BYTE * pMaxWord = pCurWord+tSegment.m_dWords.GetLength();
@@ -4761,7 +4767,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 				if ( tWord.m_uWordID<=uPrevWordID )
 				{
-					LOC_FAIL(( fp, "wordid decreased (segment=%d, word=%d, wordid="UINT64_FMT", previd="UINT64_FMT")",
+					LOC_FAIL(( fp, "wordid decreased (segment=%d, word=%d, wordid=" UINT64_FMT ", previd=" UINT64_FMT ")",
 						iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)uPrevWordID ));
 				}
 
@@ -4813,7 +4819,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 			if ( uPrevDocOffset && tWord.m_uDoc<=uPrevDocOffset )
 				LOC_FAIL(( fp, "doclist offset decreased (segment=%d, word=%d, "
-					"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, prev_doclist_offset=%u)",
+					"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, prev_doclist_offset=%u)",
 					iSegment, nWordsRead,
 					(uint64_t)tWord.m_uWordID, sWord+1, tWord.m_uDoc, uPrevDocOffset ));
 
@@ -4821,7 +4827,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 			DWORD uDocOffset = pCurDoc-tSegment.m_dDocs.Begin();
 			if ( tWord.m_uDoc!=uDocOffset )
 			{
-				LOC_FAIL(( fp, "unexpected doclist offset (wordid="UINT64_FMT"(%s)(%d), "
+				LOC_FAIL(( fp, "unexpected doclist offset (wordid=" UINT64_FMT "(%s)(%d), "
 					"doclist_offset=%u, expected_offset=%u)",
 					(uint64_t)tWord.m_uWordID, sWord+1, nWordsRead,
 					tWord.m_uDoc, uDocOffset ));
@@ -4854,7 +4860,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				if ( pIn>=pMaxDoc )
 				{
 					LOC_FAIL(( fp, "reading past doclist end (segment=%d, word=%d, "
-						"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, doclist_size=%d)",
+						"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, doclist_size=%d)",
 						iSegment, nWordsRead,
 						(uint64_t)tWord.m_uWordID, sWord+1, uDocOffset, tSegment.m_dDocs.GetLength() ));
 					break;
@@ -4866,7 +4872,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				if ( pIn>=pMaxDoc )
 				{
 					LOC_FAIL(( fp, "reading past doclist end (segment=%d, word=%d, "
-						"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, doclist_size=%d)",
+						"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, doclist_size=%d)",
 						iSegment, nWordsRead,
 						(uint64_t)tWord.m_uWordID, sWord+1, uDocOffset, tSegment.m_dDocs.GetLength() ));
 					break;
@@ -4877,7 +4883,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				if ( pIn>=pMaxDoc )
 				{
 					LOC_FAIL(( fp, "reading past doclist end (segment=%d, word=%d, "
-						"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, doclist_size=%d)",
+						"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, doclist_size=%d)",
 						iSegment, nWordsRead,
 						(uint64_t)tWord.m_uWordID, sWord+1, uDocOffset, tSegment.m_dDocs.GetLength() ));
 					break;
@@ -4892,7 +4898,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					if ( pIn>=pMaxDoc )
 					{
 						LOC_FAIL(( fp, "reading past doclist end (segment=%d, word=%d, "
-							"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, doclist_size=%d)",
+							"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, doclist_size=%d)",
 							iSegment, nWordsRead,
 							(uint64_t)tWord.m_uWordID, sWord+1, uDocOffset, tSegment.m_dDocs.GetLength() ));
 						break;
@@ -4902,7 +4908,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					if ( pIn>pMaxDoc )
 					{
 						LOC_FAIL(( fp, "reading past doclist end (segment=%d, word=%d, "
-							"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, doclist_size=%d)",
+							"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, doclist_size=%d)",
 							iSegment, nWordsRead,
 							(uint64_t)tWord.m_uWordID, sWord+1, uDocOffset, tSegment.m_dDocs.GetLength() ));
 						break;
@@ -4915,7 +4921,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					if ( pIn>pMaxDoc )
 					{
 						LOC_FAIL(( fp, "reading past doclist end (segment=%d, word=%d, "
-							"read_wordid="UINT64_FMT", read_word=%s, doclist_offset=%u, doclist_size=%d)",
+							"read_wordid=" UINT64_FMT ", read_word=%s, doclist_offset=%u, doclist_size=%d)",
 							iSegment, nWordsRead,
 							(uint64_t)tWord.m_uWordID, sWord+1, uDocOffset, tSegment.m_dDocs.GetLength() ));
 						break;
@@ -4926,14 +4932,14 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				if ( tDoc.m_uDocID<=uPrevDocID )
 				{
 					LOC_FAIL(( fp, "docid decreased (segment=%d, word=%d, "
-						"read_wordid="UINT64_FMT", read_word=%s, docid="UINT64_FMT", prev_docid="UINT64_FMT")",
+						"read_wordid=" UINT64_FMT ", read_word=%s, docid=" UINT64_FMT ", prev_docid=" UINT64_FMT ")",
 						iSegment, nWordsRead,
 						(uint64_t)tWord.m_uWordID, sWord+1, (uint64_t)tDoc.m_uDocID, (uint64_t)uPrevDocID ));
 				}
 
 				if ( !tSegment.FindRow ( tDoc.m_uDocID ) )
 					LOC_FAIL(( fp, "no attributes found (segment=%d, word=%d, "
-						"wordid="UINT64_FMT", docid="UINT64_FMT")",
+						"wordid=" UINT64_FMT ", docid=" UINT64_FMT ")",
 						iSegment, nWordsRead,
 						(uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID ));
 
@@ -4948,14 +4954,14 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					if ( iCounter!=1 || tDoc.m_uHits!=1 )
 					{
 						LOC_FAIL(( fp, "embedded hit with multiple occurences in a document found "
-							"(segment=%d, word=%d, wordid="UINT64_FMT", docid="UINT64_FMT")",
+							"(segment=%d, word=%d, wordid=" UINT64_FMT ", docid=" UINT64_FMT ")",
 							iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID ));
 					}
 
 					if ( (int)uFieldId>m_tSchema.m_dFields.GetLength() || uFieldId>SPH_MAX_FIELDS )
 					{
 						LOC_FAIL(( fp, "invalid field id in an embedded hit (segment=%d, word=%d, "
-							"wordid="UINT64_FMT", docid="UINT64_FMT", field_id=%u, total_fields=%d)",
+							"wordid=" UINT64_FMT ", docid=" UINT64_FMT ", field_id=%u, total_fields=%d)",
 							iSegment, nWordsRead,
 							(uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, uFieldId, m_tSchema.m_dFields.GetLength() ));
 					}
@@ -4963,7 +4969,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					if ( !( tDoc.m_uDocFields & ( 1 << uFieldId ) ) )
 					{
 						LOC_FAIL(( fp, "invalid field id: not in doclist mask (segment=%d, word=%d, "
-							"wordid="UINT64_FMT", docid="UINT64_FMT", field_id=%u, field_mask=%u)",
+							"wordid=" UINT64_FMT ", docid=" UINT64_FMT ", field_id=%u, field_mask=%u)",
 							iSegment, nWordsRead,
 							(uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, uFieldId, tDoc.m_uDocFields ));
 					}
@@ -4973,14 +4979,14 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					if ( tDoc.m_uHit!=uExpectedHitOffset )
 					{
 						LOC_FAIL(( fp, "unexpected hitlist offset (segment=%d, word=%d, "
-							"wordid="UINT64_FMT", docid="UINT64_FMT", offset=%u, expected_offset=%u",
+							"wordid=" UINT64_FMT ", docid=" UINT64_FMT ", offset=%u, expected_offset=%u",
 							iSegment, nWordsRead,
 							(uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, tDoc.m_uHit, uExpectedHitOffset ));
 					}
 
 					if ( tDoc.m_uHit && tDoc.m_uHit<=uPrevHitOffset )
 					{
-						LOC_FAIL(( fp, "hitlist offset decreased (segment=%d, word=%d, wordid="UINT64_FMT", docid="UINT64_FMT", offset=%u, prev_offset=%u",
+						LOC_FAIL(( fp, "hitlist offset decreased (segment=%d, word=%d, wordid=" UINT64_FMT ", docid=" UINT64_FMT ", offset=%u, prev_offset=%u",
 							iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, tDoc.m_uHit, uPrevHitOffset ));
 					}
 
@@ -4996,7 +5002,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 						pCurHit = UnzipDword ( &uValue, pCurHit );
 						if ( pCurHit>pMaxHit )
 						{
-							LOC_FAIL(( fp, "reading past hitlist end (segment=%d, word=%d, wordid="UINT64_FMT", docid="UINT64_FMT")",
+							LOC_FAIL(( fp, "reading past hitlist end (segment=%d, word=%d, wordid=" UINT64_FMT ", docid=" UINT64_FMT ")",
 								iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID ));
 							break;
 						}
@@ -5010,7 +5016,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 						if ( (int)uFieldId>m_tSchema.m_dFields.GetLength() || uFieldId>SPH_MAX_FIELDS )
 						{
 							LOC_FAIL(( fp, "invalid field id in a hitlist (segment=%d, word=%d, "
-								"wordid="UINT64_FMT", docid="UINT64_FMT", field_id=%u, total_fields=%d)",
+								"wordid=" UINT64_FMT ", docid=" UINT64_FMT ", field_id=%u, total_fields=%d)",
 								iSegment, nWordsRead,
 								(uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, uFieldId, m_tSchema.m_dFields.GetLength() ));
 						}
@@ -5018,7 +5024,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 						if ( !( tDoc.m_uDocFields & ( 1 << uFieldId ) ) )
 						{
 							LOC_FAIL(( fp, "invalid field id: not in doclist mask (segment=%d, word=%d, "
-								"wordid="UINT64_FMT", docid="UINT64_FMT", field_id=%u, field_mask=%u)",
+								"wordid=" UINT64_FMT ", docid=" UINT64_FMT ", field_id=%u, field_mask=%u)",
 								iSegment, nWordsRead,
 								(uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, uFieldId, tDoc.m_uDocFields ));
 						}
@@ -5031,13 +5037,13 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 						if ( uLastPosInField && uPosInField<=uLastPosInField )
 						{
-							LOC_FAIL(( fp, "hit position in field decreased (segment=%d, word=%d, wordid="UINT64_FMT", docid="UINT64_FMT", pos=%u, last_pos=%u)",
+							LOC_FAIL(( fp, "hit position in field decreased (segment=%d, word=%d, wordid=" UINT64_FMT ", docid=" UINT64_FMT ", pos=%u, last_pos=%u)",
 								iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, uPosInField, uLastPosInField ));
 						}
 
 						if ( bLastInField && bLastInFieldFound )
 						{
-							LOC_FAIL(( fp, "duplicate last-in-field hit found (segment=%d, word=%d, wordid="UINT64_FMT", docid="UINT64_FMT")",
+							LOC_FAIL(( fp, "duplicate last-in-field hit found (segment=%d, word=%d, wordid=" UINT64_FMT ", docid=" UINT64_FMT ")",
 								iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID ));
 						}
 
@@ -5052,7 +5058,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				DWORD uAvailFieldMask = ( 1 << m_tSchema.m_dFields.GetLength() ) - 1;
 				if ( tDoc.m_uDocFields & ~uAvailFieldMask )
 				{
-					LOC_FAIL(( fp, "wrong document field mask (segment=%d, word=%d, wordid="UINT64_FMT", docid="UINT64_FMT", mask=%u, total_fields=%d",
+					LOC_FAIL(( fp, "wrong document field mask (segment=%d, word=%d, wordid=" UINT64_FMT ", docid=" UINT64_FMT ", mask=%u, total_fields=%d",
 						iSegment, nWordsRead, (uint64_t)tWord.m_uWordID, (uint64_t)tDoc.m_uDocID, tDoc.m_uDocFields, m_tSchema.m_dFields.GetLength() ));
 				}
 
@@ -5096,7 +5102,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 						i, iSegment, tCP.m_sWord, tCP.m_iOffset, tRefCP.m_sWord, tRefCP.m_iOffset ));
 				} else
 				{
-					LOC_FAIL(( fp, "word checkpoint %d differs (segment=%d, readid="UINT64_FMT", readpos=%d, calcid="UINT64_FMT", calcpos=%d)",
+					LOC_FAIL(( fp, "word checkpoint %d differs (segment=%d, readid=" UINT64_FMT ", readpos=%d, calcid=" UINT64_FMT ", calcpos=%d)",
 						i, iSegment, (uint64_t)tCP.m_uWordID, tCP.m_iOffset, (int64_t)tRefCP.m_uWordID, tRefCP.m_iOffset ));
 				}
 			}
@@ -5206,7 +5212,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 		for ( DWORD uRow=0; pRow<pRowMax; uRow++, pRow+=m_iStride )
 		{
 			if ( uLastID>=DOCINFO2ID(pRow) )
-				LOC_FAIL(( fp, "docid decreased in attributes (segment=%d, row=%u, docid="DOCID_FMT", lastid="DOCID_FMT")",
+				LOC_FAIL(( fp, "docid decreased in attributes (segment=%d, row=%u, docid=" DOCID_FMT ", lastid=" DOCID_FMT ")",
 					iSegment, uRow, DOCINFO2ID(pRow), uLastID ));
 
 			uLastID = DOCINFO2ID(pRow);
@@ -5227,14 +5233,14 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 					if ( pMvaBase+uOffset>=pMvaMax )
 					{
-						LOC_FAIL(( fp, "MVA index out of bounds (segment=%d, row=%u, mvaattr=%d, docid="DOCID_FMT", index=%u)",
+						LOC_FAIL(( fp, "MVA index out of bounds (segment=%d, row=%u, mvaattr=%d, docid=" DOCID_FMT ", index=%u)",
 							iSegment, uRow, iItem, uLastID, uOffset ));
 						continue;
 					}
 
 					if ( pMvaCur!=pMvaBase+uOffset )
 					{
-						LOC_FAIL(( fp, "wrong MVA offset (segment=%d, row=%u, mvaattr=%d, docid="DOCID_FMT", expected=%u, got=%u)",
+						LOC_FAIL(( fp, "wrong MVA offset (segment=%d, row=%u, mvaattr=%d, docid=" DOCID_FMT ", expected=%u, got=%u)",
 							iSegment, uRow, iItem, uLastID, (DWORD)(pMvaCur-pMvaBase), uOffset ));
 
 						pMvaCur = pMvaBase+uOffset;
@@ -5245,7 +5251,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 					if ( pMvaCur+uValues-1>=pMvaMax )
 					{
-						LOC_FAIL(( fp, "MVA count out of bounds (segment=%d, row=%u, mvaattr=%d, docid="DOCID_FMT", count=%u)",
+						LOC_FAIL(( fp, "MVA count out of bounds (segment=%d, row=%u, mvaattr=%d, docid=" DOCID_FMT ", count=%u)",
 							iSegment, uRow, iItem, uLastID, uValues ));
 						pMvaCur += uValues;
 						continue;
@@ -5269,7 +5275,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 						if ( iCur<=iPrev )
 						{
-							LOC_FAIL(( fp, "unsorted MVA values (segment=%d, row=%u, mvaattr=%d, docid="DOCID_FMT", val[%u]="INT64_FMT", val[%u]="INT64_FMT")",
+							LOC_FAIL(( fp, "unsorted MVA values (segment=%d, row=%u, mvaattr=%d, docid=" DOCID_FMT ", val[%u]=" INT64_FMT ", val[%u]=" INT64_FMT ")",
 								iSegment, uRow, iItem, uLastID, ( iItem>=iMva64 ? uVal-2 : uVal-1 ), iPrev, uVal, iCur ));
 						}
 
@@ -5293,12 +5299,12 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 				// check normalized
 				if ( uExp==0 && uMantissa!=0 )
-					LOC_FAIL(( fp, "float attribute value is unnormalized (segment=%d, row=%u, attr=%d, id="DOCID_FMT", raw=0x%x, value=%f)",
+					LOC_FAIL(( fp, "float attribute value is unnormalized (segment=%d, row=%u, attr=%d, id=" DOCID_FMT ", raw=0x%x, value=%f)",
 						iSegment, uRow, iItem, uLastID, uValue, sphDW2F ( uValue ) ));
 
 				// check +-inf
 				if ( uExp==0xff && uMantissa==0 )
-					LOC_FAIL(( fp, "float attribute is infinity (segment=%d, row=%u, attr=%d, id="DOCID_FMT", raw=0x%x, value=%f)",
+					LOC_FAIL(( fp, "float attribute is infinity (segment=%d, row=%u, attr=%d, id=" DOCID_FMT ", raw=0x%x, value=%f)",
 						iSegment, uRow, iItem, uLastID, uValue, sphDW2F ( uValue ) ));
 			}
 
@@ -5313,7 +5319,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				const DWORD uOffset = (DWORD)sphGetRowAttr ( pAttrs, dStrItems[iItem] );
 				if ( uOffset>=(DWORD)tSegment.m_dStrings.GetLength() )
 				{
-					LOC_FAIL(( fp, "string offset out of bounds (segment=%d, row=%u, stringattr=%d, docid="DOCID_FMT", index=%u)",
+					LOC_FAIL(( fp, "string offset out of bounds (segment=%d, row=%u, stringattr=%d, docid=" DOCID_FMT ", index=%u)",
 						iSegment, uRow, iItem, uLastID, uOffset ));
 					continue;
 				}
@@ -5323,12 +5329,12 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 
 				bool bLastOff4UpdatedJson = ( iItem==0 && dJsonItems.GetLength () );
 				if ( uLastStrOffset>=uOffset && !bLastOff4UpdatedJson )
-					LOC_FAIL(( fp, "string offset decreased (segment=%d, row=%u, stringattr=%d, docid="DOCID_FMT", offset=%u, last_offset=%u)",
+					LOC_FAIL(( fp, "string offset decreased (segment=%d, row=%u, stringattr=%d, docid=" DOCID_FMT ", offset=%u, last_offset=%u)",
 						iSegment, uRow, iItem, uLastID, uOffset, uLastStrOffset ));
 
 				if ( !dStringOffsets.BinarySearch ( uOffset ) )
 				{
-					LOC_FAIL(( fp, "string offset is not a string start (segment=%d, row=%u, stringattr=%d, docid="DOCID_FMT", offset=%u)",
+					LOC_FAIL(( fp, "string offset is not a string start (segment=%d, row=%u, stringattr=%d, docid=" DOCID_FMT ", offset=%u)",
 						iSegment, uRow, iItem, uLastID, uOffset ));
 				} else
 					nUsedStrings++;
@@ -5363,7 +5369,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				const DWORD uOffset = (DWORD)sphGetRowAttr ( pAttrs, dJsonItems[iItem] );
 				if ( uOffset>=(DWORD)tSegment.m_dStrings.GetLength() )
 				{
-					LOC_FAIL(( fp, "string(JSON) offset out of bounds (segment=%d, row=%u, stringattr=%d, docid="DOCID_FMT", index=%u)",
+					LOC_FAIL(( fp, "string(JSON) offset out of bounds (segment=%d, row=%u, stringattr=%d, docid=" DOCID_FMT ", index=%u)",
 						iSegment, uRow, iItem, uLastID, uOffset ));
 					continue;
 				}
@@ -5372,12 +5378,12 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 					continue;
 
 				if ( uLastStrOffset>=uOffset )
-					LOC_FAIL(( fp, "string(JSON) offset decreased (segment=%d, row=%u, stringattr=%d, docid="DOCID_FMT", offset=%u, last_offset=%u)",
+					LOC_FAIL(( fp, "string(JSON) offset decreased (segment=%d, row=%u, stringattr=%d, docid=" DOCID_FMT ", offset=%u, last_offset=%u)",
 						iSegment, uRow, iItem, uLastID, uOffset, uLastStrOffset ));
 
 				if ( !dStringOffsets.BinarySearch ( uOffset ) )
 				{
-					LOC_FAIL(( fp, "string(JSON) offset is not a string start (segment=%d, row=%u, stringattr=%d, docid="DOCID_FMT", offset=%u)",
+					LOC_FAIL(( fp, "string(JSON) offset is not a string start (segment=%d, row=%u, stringattr=%d, docid=" DOCID_FMT ", offset=%u)",
 						iSegment, uRow, iItem, uLastID, uOffset ));
 				} else
 					nUsedJsons++;
@@ -5394,7 +5400,7 @@ int RtIndex_t::DebugCheck ( FILE * fp )
 				{
 					ESphJsonType eType = (ESphJsonType)*p++;
 
-					if ( dStateStack.GetLength() && dStateStack.Last()==JSON_OBJECT )
+					if ( dStateStack.GetLength() && dStateStack.Last()==JSON_OBJECT && eType!=JSON_EOF )
 					{
 						int iKeyLen = sphJsonUnpackInt ( &p );
 						p += iKeyLen;
@@ -6191,6 +6197,9 @@ struct DictEntryRtPayload_t
 
 void RtIndex_t::GetPrefixedWords ( const char * sSubstring, int iSubLen, const char * sWildcard, Args_t & tArgs ) const
 {
+	int dWildcard [ SPH_MAX_WORD_LEN + 1 ];
+	int * pWildcard = ( sphIsUTF8 ( sWildcard ) && sphUTF8ToWideChar ( sWildcard, dWildcard, SPH_MAX_WORD_LEN ) ) ? dWildcard : NULL;
+
 	const CSphFixedVector<RtSegment_t*> & dSegments = *((CSphFixedVector<RtSegment_t*> *)tArgs.m_pIndexData);
 	DictEntryRtPayload_t tDict2Payload ( tArgs.m_bPayload, dSegments.GetLength() );
 	const int iSkipMagic = ( BYTE(*sSubstring)<0x20 ); // whether to skip heading magic chars in the prefix, like NONSTEMMED maker
@@ -6225,7 +6234,7 @@ void RtIndex_t::GetPrefixedWords ( const char * sSubstring, int iSubLen, const c
 			if ( iCmp<0 )
 			{
 				break;
-			} else if ( iCmp==0 && iSubLen<=pWord->m_sWord[0] && sphWildcardMatch ( (const char *)pWord->m_sWord+1+iSkipMagic, sWildcard ) )
+			} else if ( iCmp==0 && iSubLen<=pWord->m_sWord[0] && sphWildcardMatch ( (const char *)pWord->m_sWord+1+iSkipMagic, sWildcard, pWildcard ) )
 			{
 				tDict2Payload.Add ( pWord, iSeg );
 			}
@@ -6312,6 +6321,9 @@ void RtIndex_t::GetInfixedWords ( const char * sSubstring, int iSubLen, const ch
 		if ( !ExtractInfixCheckpoints ( sSubstring, iSubLen, m_iMaxCodepointLength, pSeg->m_dWordCheckpoints.GetLength(), pSeg->m_dInfixFilterCP, dPoints ) )
 			continue;
 
+		int dWildcard [ SPH_MAX_WORD_LEN + 1 ];
+		int * pWildcard = ( sphIsUTF8 ( sWildcard ) && sphUTF8ToWideChar ( sWildcard, dWildcard, SPH_MAX_WORD_LEN ) ) ? dWildcard : NULL;
+
 		// walk those checkpoints, check all their words
 		ARRAY_FOREACH ( i, dPoints )
 		{
@@ -6330,7 +6342,7 @@ void RtIndex_t::GetInfixedWords ( const char * sSubstring, int iSubLen, const ch
 					continue;
 
 				// check it
-				if ( !sphWildcardMatch ( (const char*)pWord->m_sWord+1+iSkipMagic, sWildcard ) )
+				if ( !sphWildcardMatch ( (const char*)pWord->m_sWord+1+iSkipMagic, sWildcard, pWildcard ) )
 					continue;
 
 				// matched, lets add
@@ -6525,18 +6537,22 @@ struct SphFinalArenaCopy_t : ISphMatchProcessor
 			case SPH_ATTR_JSON:
 			{
 				const SphAttr_t uOff = pMatch->GetAttr ( tLoc );
+				DWORD uRebased = 0;
 				if ( uOff>0 )
 				{
 					assert ( uOff<( I64C(1)<<32 ) ); // should be 32 bit offset
 					assert ( !bSegmentMatch || (int)uOff<m_dSegments[iStorageSrc]->m_dStrings.GetLength() );
-					DWORD uRebased = CopyPackedString ( pBaseString + uOff, m_dStorageString );
+					uRebased = CopyPackedString ( pBaseString + uOff, m_dStorageString );
 					iAttr = uRebased;
-					// store the map of full jsons in order to map json fields
-					if ( tLoc.m_eAttrType==SPH_ATTR_JSON )
-					{
-						m_dOriginalJson.Add ( (DWORD)uOff );
-						m_dMovedJson.Add ( uRebased );
-					}
+				}
+
+				// store the map of full jsons in order to map json fields
+				// note that m_dJsonAssoc mapping is calculated only once (see the m_dJsonAssoc[iJson]<0 condition)
+				// we have to consider empty fields too (if any) otherwise mapping will be incorrect or out of bounds
+				if ( tLoc.m_eAttrType==SPH_ATTR_JSON && m_dJsonAssoc.GetLength() )
+				{
+					m_dOriginalJson.Add ( (DWORD)uOff );
+					m_dMovedJson.Add ( uRebased );
 				}
 			}
 			break;
@@ -6572,8 +6588,8 @@ struct SphFinalArenaCopy_t : ISphMatchProcessor
 								iDistance = uOff - m_dOriginalJson[j];
 								k = j;
 							}
-							assert ( k>=0 );
-							m_dJsonAssoc[iJson] = k;
+						assert ( k>=0 );
+						m_dJsonAssoc[iJson] = k;
 					}
 					DWORD uNew = m_dMovedJson [ m_dJsonAssoc[iJson] ] - m_dOriginalJson [ m_dJsonAssoc[iJson] ] + uOff;
 					++iJson;
@@ -7585,10 +7601,8 @@ int RtIndex_t::UpdateAttributes ( const CSphAttrUpdate & tUpd, int iIndex, CSphS
 	CSphBitvec dBigints ( iUpdLen );
 	CSphBitvec dDoubles ( iUpdLen );
 	CSphBitvec dJsonFields ( iUpdLen );
-	CSphVector<int64_t> dValues ( iUpdLen );
 	CSphVector < CSphRefcountedPtr<ISphExpr> > dExpr ( iUpdLen );
 	memset ( dLocators.Begin(), 0, dLocators.GetSizeBytes() );
-	memset ( dValues.Begin(), 0, dValues.GetSizeBytes() );
 
 	uint64_t uDst64 = 0;
 	ARRAY_FOREACH ( i, tUpd.m_dAttrs )
@@ -7669,12 +7683,6 @@ int RtIndex_t::UpdateAttributes ( const CSphAttrUpdate & tUpd, int iIndex, CSphS
 			dBigints.BitSet(i);
 		else if ( tUpd.m_dTypes[i]==SPH_ATTR_FLOAT )
 			dDoubles.BitSet(i);
-		switch ( tUpd.m_dTypes[i] )
-		{
-			case SPH_ATTR_FLOAT:	dValues[i] = sphD2QW ( (double)sphDW2F ( tUpd.m_dPool[i] ) ); break;
-			case SPH_ATTR_BIGINT:	dValues[i] = MVA_UPSIZE ( &tUpd.m_dPool[i] ); break;
-			default:				dValues[i] = tUpd.m_dPool[i]; break;
-		}
 	}
 
 	// check if we are empty
@@ -7723,7 +7731,11 @@ int RtIndex_t::UpdateAttributes ( const CSphAttrUpdate & tUpd, int iIndex, CSphS
 					? JSON_DOUBLE
 					: ( dBigints.BitGet ( iCol ) ? JSON_INT64 : JSON_INT32 );
 
-				if ( !sphJsonInplaceUpdate ( eType, dValues[iCol], dExpr[iCol].Ptr(), (BYTE *)pSegment->m_dStrings.Begin(), pRow, false ) )
+				SphAttr_t uValue = dDoubles.BitGet ( iCol )
+					? sphD2QW ( (double)sphDW2F ( tUpd.m_dPool[iPos] ) )
+					: dBigints.BitGet ( iCol ) ? MVA_UPSIZE ( &tUpd.m_dPool[iPos] ) : tUpd.m_dPool[iPos];
+
+				if ( !sphJsonInplaceUpdate ( eType, uValue, dExpr[iCol].Ptr(), (BYTE *)pSegment->m_dStrings.Begin(), pRow, false ) )
 				{
 					sError.SetSprintf ( "attribute '%s' can not be updated (not found or incompatible types)", tUpd.m_dAttrs[iCol] );
 					return -1;
@@ -7763,7 +7775,11 @@ int RtIndex_t::UpdateAttributes ( const CSphAttrUpdate & tUpd, int iIndex, CSphS
 						? JSON_DOUBLE
 						: ( dBigints.BitGet ( iCol ) ? JSON_INT64 : JSON_INT32 );
 
-					if ( sphJsonInplaceUpdate ( eType, dValues[iCol], dExpr[iCol].Ptr(), pSegment->m_dStrings.Begin(), pRow, true ) )
+					SphAttr_t uValue = dDoubles.BitGet ( iCol )
+						? sphD2QW ( (double)sphDW2F ( tUpd.m_dPool[iPos] ) )
+						: dBigints.BitGet ( iCol ) ? MVA_UPSIZE ( &tUpd.m_dPool[iPos] ) : tUpd.m_dPool[iPos];
+
+					if ( sphJsonInplaceUpdate ( eType, uValue, dExpr[iCol].Ptr(), pSegment->m_dStrings.Begin(), pRow, true ) )
 					{
 						bUpdated = true;
 						uUpdateMask |= ATTRS_STRINGS_UPDATED;
@@ -8192,12 +8208,14 @@ bool RtIndex_t::AttachDiskIndex ( CSphIndex * pIndex, CSphString & sError )
 		if ( iCount + pIndex->GetKillListSize()!=iSizeMax )
 		{
 			SafeDeleteArray ( pIndexDocList );
-			sError.SetSprintf ( "ATTACH failed, documents overflow (count="INT64_FMT", size max="INT64_FMT")", iCount + pIndex->GetKillListSize(), iSizeMax );
+			sError.SetSprintf ( "ATTACH failed, documents overflow (count=" INT64_FMT ", size max=" INT64_FMT ")", iCount + pIndex->GetKillListSize(), iSizeMax );
 			return false;
 		}
 
 		SphDocID_t * pCombined = new SphDocID_t[(size_t)( iCount + pIndex->GetKillListSize() )];
-		memcpy ( pCombined, pIndexDocList, (size_t)( sizeof(SphDocID_t) * iCount ) );
+		// can not use memcpy as sizeof(SphAttr_t)!=sizeof(SphDocID_t) for id32 build
+		for ( int64_t i=0; i<iCount; i++ )
+			pCombined[i] = (SphDocID_t)pIndexDocList[i];
 		memcpy ( pCombined+iCount, pIndex->GetKillList(), sizeof(SphDocID_t) * pIndex->GetKillListSize() );
 		iCount += pIndex->GetKillListSize();
 		SafeDeleteArray ( pIndexDocList );
@@ -8208,20 +8226,31 @@ bool RtIndex_t::AttachDiskIndex ( CSphIndex * pIndex, CSphString & sError )
 		GetReaderChunks ( tGuard );
 		SaveDiskChunk ( m_iTID, tGuard, m_tStats );
 
+		int64_t iKeep = 0;
+
 		// kill-list drying up
 		for ( int iIndex=m_dDiskChunks.GetLength()-1; iIndex>=0 && iCount; iIndex-- )
 		{
 			const CSphIndex * pDiskIndex = m_dDiskChunks[iIndex];
-			for ( int i=0; i<iCount; i++ )
+			for ( int64_t iID=iKeep; iID<iCount; iID++ )
 			{
-				SphDocID_t uDocid = pCombined[i];
+				SphDocID_t uDocid = pCombined[iID];
 				if ( !pDiskIndex->HasDocid ( (SphDocID_t)uDocid ) )
+				{
+					// no duplicates - no need to keep ID in kill-list
+					if ( iIndex==0 )
+					{
+						// RemoveFast
+						pCombined[iID] = pCombined[iCount-1];
+						iCount--;
+					}
 					continue;
+				}
 
 				// we just found the most recent chunk with our suspect docid
 				// let's check whether it's already killed by subsequent chunks, or gets killed now
 				bool bKeep = true;
-				for ( int k=i+1; k<m_dDiskChunks.GetLength() && bKeep; k++ )
+				for ( int k=iIndex+1; k<m_dDiskChunks.GetLength() && bKeep; k++ )
 				{
 					const CSphIndex * pKilled = m_dDiskChunks[k];
 					bKeep = ( sphBinarySearch ( pKilled->GetKillList(), pKilled->GetKillList() + pKilled->GetKillListSize() - 1, uDocid )==NULL );
@@ -8230,8 +8259,12 @@ bool RtIndex_t::AttachDiskIndex ( CSphIndex * pIndex, CSphString & sError )
 				if ( !bKeep )
 				{
 					// RemoveFast
-					pCombined[i] = pCombined[iCount-1];
+					pCombined[iID] = pCombined[iCount-1];
 					iCount--;
+				} else
+				{
+					Swap ( pCombined[iID], pCombined[iKeep] );
+					iKeep++;
 				}
 			}
 		}
@@ -8244,7 +8277,7 @@ bool RtIndex_t::AttachDiskIndex ( CSphIndex * pIndex, CSphString & sError )
 		if ( iCount!=iSizeMax )
 		{
 			SafeDeleteArray ( pCombined );
-			sError.SetSprintf ( "ATTACH failed, kill-list overflow (size="INT64_FMT", size max="INT64_FMT")", iCount, iSizeMax );
+			sError.SetSprintf ( "ATTACH failed, kill-list overflow (size=" INT64_FMT ", size max=" INT64_FMT ")", iCount, iSizeMax );
 			return false;
 		}
 
@@ -8571,7 +8604,9 @@ void RtIndex_t::GetStatus ( CSphIndexStatus * pRes ) const
 
 bool RtIndex_t::IsSameSettings ( CSphReconfigureSettings & tSettings, CSphReconfigureSetup & tSetup, CSphString & sError ) const
 {
-	// FIXME!!! check missed embedded files
+	// flow like at sphFixupIndexSettings
+
+	// tokenizer setup first
 	CSphScopedPtr<ISphTokenizer> tTokenizer ( ISphTokenizer::Create ( tSettings.m_tTokenizer, NULL, sError ) );
 	if ( !tTokenizer.Ptr() )
 	{
@@ -8579,13 +8614,23 @@ bool RtIndex_t::IsSameSettings ( CSphReconfigureSettings & tSettings, CSphReconf
 		return true;
 	}
 
-	// multiforms
-	tTokenizer = ISphTokenizer::CreateMultiformFilter ( tTokenizer.LeakPtr(), m_pDict->GetMultiWordforms() );
+	// dict setup second
+	CSphScopedPtr<CSphDict> tDict ( sphCreateDictionaryCRC ( tSettings.m_tDict, NULL, tTokenizer.Ptr(), m_sIndexName.cstr(), sError ) );
+	if ( !tDict.Ptr() )
+	{
+		sError.SetSprintf ( "'%s' failed to create dictionary, error '%s'", m_sIndexName.cstr(), sError.cstr() );
+		return true;
+	}
+
+	// multiforms right after dict
+	tTokenizer = ISphTokenizer::CreateMultiformFilter ( tTokenizer.LeakPtr(), tDict->GetMultiWordforms() );
+
+	// these goes from PostSetup
 
 	// bigram filter
 	if ( tSettings.m_tIndex.m_eBigramIndex!=SPH_BIGRAM_NONE && tSettings.m_tIndex.m_eBigramIndex!=SPH_BIGRAM_ALL )
 	{
-		tTokenizer->SetBuffer ( (BYTE*)tSettings.m_tIndex.m_sBigramWords.cstr(), tSettings.m_tIndex.m_sBigramWords.Length() );
+		tTokenizer->SetBuffer ( (BYTE*)tSettings.m_tIndex.m_sBigramWords.cstr (), tSettings.m_tIndex.m_sBigramWords.Length() );
 
 		BYTE * pTok = NULL;
 		while ( ( pTok = tTokenizer->GetToken() )!=NULL )
@@ -8594,26 +8639,25 @@ bool RtIndex_t::IsSameSettings ( CSphReconfigureSettings & tSettings, CSphReconf
 		tSettings.m_tIndex.m_dBigramWords.Sort();
 	}
 
+	// rlp filter
 #if USE_RLP
 	tTokenizer = ISphTokenizer::CreateRLPFilter ( tTokenizer.LeakPtr(), tSettings.m_tIndex.m_eChineseRLP!=SPH_RLP_NONE, g_sRLPRoot.cstr(),
-		g_sRLPEnv.cstr(), tSettings.m_tIndex.m_sRLPContext.cstr(), true, sError );
+													g_sRLPEnv.cstr(), tSettings.m_tIndex.m_sRLPContext.cstr(), true, sError );
 #endif
-
-	// FIXME!!! check missed embedded files
-	CSphScopedPtr<CSphDict> tDict ( sphCreateDictionaryCRC ( tSettings.m_tDict, NULL, tTokenizer.Ptr(), m_sIndexName.cstr(), sError ) );
-	if ( !tDict.Ptr() )
-	{
-		sError.SetSprintf ( "'%s' failed to create dictionary, error '%s'", m_sIndexName.cstr(), sError.cstr() );
-		return true;
-	}
 
 	bool bNeedExact = ( tDict->HasMorphology() || tDict->GetWordformsFileInfos().GetLength() );
 	if ( tSettings.m_tIndex.m_bIndexExactWords && !bNeedExact )
+	{
 		tSettings.m_tIndex.m_bIndexExactWords = false;
+	}
 
 	if ( tDict->GetSettings().m_bWordDict && tDict->HasMorphology() &&
 		( tSettings.m_tIndex.m_iMinPrefixLen || tSettings.m_tIndex.m_iMinInfixLen ) && !tSettings.m_tIndex.m_bIndexExactWords )
-		tSettings.m_tIndex.m_bIndexExactWords = true;
+	{
+			tSettings.m_tIndex.m_bIndexExactWords = true;
+	}
+
+	// setup done
 
 	// compare options
 	if ( m_pTokenizer->GetSettingsFNV()!=tTokenizer->GetSettingsFNV() || m_pDict->GetSettingsFNV()!=tDict->GetSettingsFNV() ||
@@ -8841,7 +8885,7 @@ bool BinlogReader_c::CheckCrc ( const char * sOp, const char * sIndexName, int64
 	ResetCrc();
 	bool bPassed = ( uRef==uCRC );
 	if ( !bPassed )
-		sphWarning ( "binlog: %s: CRC mismatch (index=%s, tid="INT64_FMT", pos="INT64_FMT")", sOp, sIndexName ? sIndexName : "", iTid, iTxnPos );
+		sphWarning ( "binlog: %s: CRC mismatch (index=%s, tid=" INT64_FMT ", pos=" INT64_FMT ")", sOp, sIndexName ? sIndexName : "", iTid, iTxnPos );
 	return bPassed;
 }
 
@@ -9063,7 +9107,7 @@ void RtBinlog_c::BinlogReconfigure ( int64_t * pTID, const char * sIndexName, co
 void RtBinlog_c::NotifyIndexFlush ( const char * sIndexName, int64_t iTID, bool bShutdown )
 {
 	if ( m_bReplayMode )
-		sphInfo ( "index '%s': ramchunk saved. TID="INT64_FMT"", sIndexName, iTID );
+		sphInfo ( "index '%s': ramchunk saved. TID=" INT64_FMT "", sIndexName, iTID );
 
 	if ( m_bReplayMode || m_bDisabled )
 		return;
@@ -9501,7 +9545,7 @@ int RtBinlog_c::ReplayBinlog ( const SmallStringHash_T<CSphIndex*> & hIndexes, D
 		{
 			sphWarning ( "binlog: log open error: %s", sError.cstr() );
 			return 0;
-		} 
+		}
 		sphDie ( "binlog: log open error: %s", sError.cstr() );
 	}
 
@@ -9544,7 +9588,7 @@ int RtBinlog_c::ReplayBinlog ( const SmallStringHash_T<CSphIndex*> & hIndexes, D
 		iPos = tReader.GetPos();
 		if ( tReader.GetDword()!=BLOP_MAGIC )
 		{
-			sphDie ( "binlog: log missing txn marker at pos="INT64_FMT" (corrupted?)", iPos );
+			sphDie ( "binlog: log missing txn marker at pos=" INT64_FMT " (corrupted?)", iPos );
 			break;
 		}
 
@@ -9552,7 +9596,7 @@ int RtBinlog_c::ReplayBinlog ( const SmallStringHash_T<CSphIndex*> & hIndexes, D
 		const uint64_t uOp = tReader.UnzipOffset ();
 
 		if ( uOp<=0 || uOp>=BLOP_TOTAL )
-			sphDie ( "binlog: unexpected entry (blop="UINT64_FMT", pos="INT64_FMT")", uOp, iPos );
+			sphDie ( "binlog: unexpected entry (blop=" UINT64_FMT ", pos=" INT64_FMT ")", uOp, iPos );
 
 		// FIXME! blop might be OK but skipped (eg. index that is no longer)
 		switch ( uOp )
@@ -9591,10 +9635,10 @@ int RtBinlog_c::ReplayBinlog ( const SmallStringHash_T<CSphIndex*> & hIndexes, D
 	tmReplay = sphMicroTimer() - tmReplay;
 
 	if ( tReader.GetErrorFlag() )
-		sphWarning ( "binlog: log io error at pos="INT64_FMT": %s", iPos, sError.cstr() );
+		sphWarning ( "binlog: log io error at pos=" INT64_FMT ": %s", iPos, sError.cstr() );
 
 	if ( !bReplayOK )
-		sphWarning ( "binlog: replay error at pos="INT64_FMT")", iPos );
+		sphWarning ( "binlog: replay error at pos=" INT64_FMT ")", iPos );
 
 	// show additional replay statistics
 	ARRAY_FOREACH ( i, tLog.m_dIndexInfos )
@@ -9602,17 +9646,17 @@ int RtBinlog_c::ReplayBinlog ( const SmallStringHash_T<CSphIndex*> & hIndexes, D
 		const BinlogIndexInfo_t & tIndex = tLog.m_dIndexInfos[i];
 		if ( !hIndexes ( tIndex.m_sName.cstr() ) )
 		{
-			sphWarning ( "binlog: index %s: missing; tids "INT64_FMT" to "INT64_FMT" skipped!",
+			sphWarning ( "binlog: index %s: missing; tids " INT64_FMT " to " INT64_FMT " skipped!",
 				tIndex.m_sName.cstr(), tIndex.m_iMinTID, tIndex.m_iMaxTID );
 
 		} else if ( tIndex.m_iPreReplayTID < tIndex.m_iMaxTID )
 		{
-			sphInfo ( "binlog: index %s: recovered from tid "INT64_FMT" to tid "INT64_FMT,
+			sphInfo ( "binlog: index %s: recovered from tid " INT64_FMT " to tid " INT64_FMT,
 				tIndex.m_sName.cstr(), tIndex.m_iPreReplayTID, tIndex.m_iMaxTID );
 
 		} else
 		{
-			sphInfo ( "binlog: index %s: skipped at tid "INT64_FMT" and max binlog tid "INT64_FMT,
+			sphInfo ( "binlog: index %s: skipped at tid " INT64_FMT " and max binlog tid " INT64_FMT,
 				tIndex.m_sName.cstr(), tIndex.m_iPreReplayTID, tIndex.m_iMaxTID );
 		}
 	}
@@ -9637,7 +9681,7 @@ static BinlogIndexInfo_t & ReplayIndexID ( BinlogReader_c & tReader, BinlogFileD
 	const int iVal = (int)tReader.UnzipOffset();
 
 	if ( iVal<0 || iVal>=tLog.m_dIndexInfos.GetLength() )
-		sphDie ( "binlog: %s: unexpected index id (id=%d, max=%d, pos="INT64_FMT")",
+		sphDie ( "binlog: %s: unexpected index id (id=%d, max=%d, pos=" INT64_FMT ")",
 			sPlace, iVal, tLog.m_dIndexInfos.GetLength(), iTxnPos );
 
 	return tLog.m_dIndexInfos[iVal];
@@ -9687,18 +9731,18 @@ bool RtBinlog_c::ReplayCommit ( int iBinlog, DWORD uReplayFlags, BinlogReader_c 
 
 	// check TID
 	if ( iTID<tIndex.m_iMaxTID )
-		sphDie ( "binlog: commit: descending tid (index=%s, lasttid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT")",
+		sphDie ( "binlog: commit: descending tid (index=%s, lasttid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ")",
 			tIndex.m_sName.cstr(), tIndex.m_iMaxTID, iTID, iTxnPos );
 
 	// check timestamp
 	if ( tmStamp<tIndex.m_tmMax )
 	{
 		if (!( uReplayFlags & SPH_REPLAY_ACCEPT_DESC_TIMESTAMP ))
-			sphDie ( "binlog: commit: descending time (index=%s, lasttime="INT64_FMT", logtime="INT64_FMT", pos="INT64_FMT")",
+			sphDie ( "binlog: commit: descending time (index=%s, lasttime=" INT64_FMT ", logtime=" INT64_FMT ", pos=" INT64_FMT ")",
 				tIndex.m_sName.cstr(), tIndex.m_tmMax, tmStamp, iTxnPos );
 
 		sphWarning ( "binlog: commit: replaying txn despite descending time "
-			"(index=%s, logtid="INT64_FMT", lasttime="INT64_FMT", logtime="INT64_FMT", pos="INT64_FMT")",
+			"(index=%s, logtid=" INT64_FMT ", lasttime=" INT64_FMT ", logtime=" INT64_FMT ", pos=" INT64_FMT ")",
 			tIndex.m_sName.cstr(), iTID, tIndex.m_tmMax, tmStamp, iTxnPos );
 		tIndex.m_tmMax = tmStamp;
 	}
@@ -9709,7 +9753,7 @@ bool RtBinlog_c::ReplayCommit ( int iBinlog, DWORD uReplayFlags, BinlogReader_c 
 		// we normally expect per-index TIDs to be sequential
 		// but let's be graceful about that
 		if ( iTID!=tIndex.m_pRT->m_iTID+1 )
-			sphWarning ( "binlog: commit: unexpected tid (index=%s, indextid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT")",
+			sphWarning ( "binlog: commit: unexpected tid (index=%s, indextid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ")",
 				tIndex.m_sName.cstr(), tIndex.m_pRT->m_iTID, iTID, iTxnPos );
 
 		// in case dict=keywords
@@ -9744,7 +9788,7 @@ bool RtBinlog_c::ReplayIndexAdd ( int iBinlog, const SmallStringHash_T<CSphIndex
 
 	uint64_t uVal = tReader.UnzipOffset();
 	if ( (int)uVal!=tLog.m_dIndexInfos.GetLength() )
-		sphDie ( "binlog: indexadd: unexpected index id (id="UINT64_FMT", expected=%d, pos="INT64_FMT")",
+		sphDie ( "binlog: indexadd: unexpected index id (id=" UINT64_FMT ", expected=%d, pos=" INT64_FMT ")",
 			uVal, tLog.m_dIndexInfos.GetLength(), iTxnPos );
 
 	// load data
@@ -9760,7 +9804,7 @@ bool RtBinlog_c::ReplayIndexAdd ( int iBinlog, const SmallStringHash_T<CSphIndex
 	// check for index name dupes
 	ARRAY_FOREACH ( i, tLog.m_dIndexInfos )
 		if ( tLog.m_dIndexInfos[i].m_sName==sName )
-			sphDie ( "binlog: duplicate index name (name=%s, dupeid=%d, pos="INT64_FMT")",
+			sphDie ( "binlog: duplicate index name (name=%s, dupeid=%d, pos=" INT64_FMT ")",
 				sName.cstr(), i, iTxnPos );
 
 	// not a dupe, lets add
@@ -9817,10 +9861,10 @@ bool RtBinlog_c::ReplayUpdateAttributes ( int iBinlog, BinlogReader_c & tReader 
 
 	// check TID, time order in log
 	if ( iTID<tIndex.m_iMaxTID )
-		sphDie ( "binlog: update: descending tid (index=%s, lasttid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT")",
+		sphDie ( "binlog: update: descending tid (index=%s, lasttid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ")",
 			tIndex.m_sName.cstr(), tIndex.m_iMaxTID, iTID, iTxnPos );
 	if ( tmStamp<tIndex.m_tmMax )
-		sphDie ( "binlog: update: descending time (index=%s, lasttime="INT64_FMT", logtime="INT64_FMT", pos="INT64_FMT")",
+		sphDie ( "binlog: update: descending time (index=%s, lasttime=" INT64_FMT ", logtime=" INT64_FMT ", pos=" INT64_FMT ")",
 			tIndex.m_sName.cstr(), tIndex.m_tmMax, tmStamp, iTxnPos );
 
 	if ( tIndex.m_pIndex && iTID > tIndex.m_pIndex->m_iTID )
@@ -9828,7 +9872,7 @@ bool RtBinlog_c::ReplayUpdateAttributes ( int iBinlog, BinlogReader_c & tReader 
 		// we normally expect per-index TIDs to be sequential
 		// but let's be graceful about that
 		if ( iTID!=tIndex.m_pIndex->m_iTID+1 )
-			sphWarning ( "binlog: update: unexpected tid (index=%s, indextid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT")",
+			sphWarning ( "binlog: update: unexpected tid (index=%s, indextid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ")",
 				tIndex.m_sName.cstr(), tIndex.m_pIndex->m_iTID, iTID, iTxnPos );
 
 		tUpd.m_dRows.Resize ( tUpd.m_dDocids.GetLength() );
@@ -9896,7 +9940,7 @@ bool RtBinlog_c::ReplayCacheAdd ( int iBinlog, BinlogReader_c & tReader ) const
 		if ( tCache.m_iMinTID!=tIndex.m_iMinTID || tCache.m_iMaxTID!=tIndex.m_iMaxTID )
 		{
 			sphWarning ( "binlog: cache mismatch: index %s tid ranges mismatch "
-				"(cached "INT64_FMT" to "INT64_FMT", replayed "INT64_FMT" to "INT64_FMT")",
+				"(cached " INT64_FMT " to " INT64_FMT ", replayed " INT64_FMT " to " INT64_FMT ")",
 				tCache.m_sName.cstr(),
 				tCache.m_iMinTID, tCache.m_iMaxTID, tIndex.m_iMinTID, tIndex.m_iMaxTID );
 		}
@@ -9924,7 +9968,7 @@ bool RtBinlog_c::ReplayReconfigure ( int iBinlog, DWORD uReplayFlags, BinlogRead
 	CSphReconfigureSettings tSettings;
 	LoadIndexSettings ( tSettings.m_tIndex, tReader, INDEX_FORMAT_VERSION );
 	if ( !LoadTokenizerSettings ( tReader, tSettings.m_tTokenizer, tEmbeddedFiles, INDEX_FORMAT_VERSION, sError ) )
-		sphDie ( "binlog: reconfigure: failed to load settings (index=%s, lasttid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT", error=%s)",
+		sphDie ( "binlog: reconfigure: failed to load settings (index=%s, lasttid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ", error=%s)",
 			tIndex.m_sName.cstr(), tIndex.m_iMaxTID, iTID, iTxnPos, sError.cstr() );
 	LoadDictionarySettings ( tReader, tSettings.m_tDict, tEmbeddedFiles, INDEX_FORMAT_VERSION, sError );
 
@@ -9934,18 +9978,18 @@ bool RtBinlog_c::ReplayReconfigure ( int iBinlog, DWORD uReplayFlags, BinlogRead
 
 	// check TID
 	if ( iTID<tIndex.m_iMaxTID )
-		sphDie ( "binlog: reconfigure: descending tid (index=%s, lasttid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT")",
+		sphDie ( "binlog: reconfigure: descending tid (index=%s, lasttid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ")",
 			tIndex.m_sName.cstr(), tIndex.m_iMaxTID, iTID, iTxnPos );
 
 	// check timestamp
 	if ( tmStamp<tIndex.m_tmMax )
 	{
 		if (!( uReplayFlags & SPH_REPLAY_ACCEPT_DESC_TIMESTAMP ))
-			sphDie ( "binlog: reconfigure: descending time (index=%s, lasttime="INT64_FMT", logtime="INT64_FMT", pos="INT64_FMT")",
+			sphDie ( "binlog: reconfigure: descending time (index=%s, lasttime=" INT64_FMT ", logtime=" INT64_FMT ", pos=" INT64_FMT ")",
 				tIndex.m_sName.cstr(), tIndex.m_tmMax, tmStamp, iTxnPos );
 
 		sphWarning ( "binlog: reconfigure: replaying txn despite descending time "
-			"(index=%s, logtid="INT64_FMT", lasttime="INT64_FMT", logtime="INT64_FMT", pos="INT64_FMT")",
+			"(index=%s, logtid=" INT64_FMT ", lasttime=" INT64_FMT ", logtime=" INT64_FMT ", pos=" INT64_FMT ")",
 			tIndex.m_sName.cstr(), iTID, tIndex.m_tmMax, tmStamp, iTxnPos );
 		tIndex.m_tmMax = tmStamp;
 	}
@@ -9956,7 +10000,7 @@ bool RtBinlog_c::ReplayReconfigure ( int iBinlog, DWORD uReplayFlags, BinlogRead
 		// we normally expect per-index TIDs to be sequential
 		// but let's be graceful about that
 		if ( iTID!=tIndex.m_pRT->m_iTID+1 )
-			sphWarning ( "binlog: reconfigure: unexpected tid (index=%s, indextid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT")",
+			sphWarning ( "binlog: reconfigure: unexpected tid (index=%s, indextid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ")",
 				tIndex.m_sName.cstr(), tIndex.m_pRT->m_iTID, iTID, iTxnPos );
 
 		sError = "";
@@ -9964,7 +10008,7 @@ bool RtBinlog_c::ReplayReconfigure ( int iBinlog, DWORD uReplayFlags, BinlogRead
 		bool bSame = tIndex.m_pRT->IsSameSettings ( tSettings, tSetup, sError );
 
 		if ( !sError.IsEmpty() )
-			sphWarning ( "binlog: reconfigure: wrong settings (index=%s, indextid="INT64_FMT", logtid="INT64_FMT", pos="INT64_FMT", error=%s)",
+			sphWarning ( "binlog: reconfigure: wrong settings (index=%s, indextid=" INT64_FMT ", logtid=" INT64_FMT ", pos=" INT64_FMT ", error=%s)",
 				tIndex.m_sName.cstr(), tIndex.m_pRT->m_iTID, iTID, iTxnPos, sError.cstr() );
 
 		if ( !bSame )
@@ -10126,6 +10170,13 @@ bool sphRTSchemaConfigure ( const CSphConfigSection & hIndex, CSphSchema * pSche
 			pSchema->AddAttr ( tCol, false );
 		}
 	}
+
+	if ( !pSchema->m_dAttrs.GetLength () )
+	{
+		pError->SetSprintf ( "no attribute configured (use rt_attr directive)" );
+		return false;
+	}
+
 
 	return true;
 }

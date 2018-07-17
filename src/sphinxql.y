@@ -132,9 +132,6 @@
 %token	TOK_WHERE
 %token	TOK_WITHIN
 
-%type	<m_iValue>		named_const_list
-%type	<m_iValue>		udf_type
-
 %left TOK_OR
 %left TOK_AND
 %left '|'
@@ -182,7 +179,6 @@ request:
 statement:
 	insert_into
 	| delete_from
-	| set_stmt
 	| set_global_stmt
 	| transact_op
 	| call_proc
@@ -256,6 +252,7 @@ multi_stmt_list:
 multi_stmt:
 	select
 	| show_stmt
+	| set_stmt
 	;
 
 select:
@@ -423,24 +420,32 @@ filter_item:
 			pFilter->m_dValues.Add ( $3.m_iValue );
 			pFilter->m_bExclude = true;
 		}
-	| expr_ident TOK_IN '(' const_list_or_string_list ')'
+	| expr_ident TOK_IN '(' const_list ')'
 		{
 			CSphFilterSettings * pFilter = pParser->AddValuesFilter ( $1 );
 			if ( !pFilter )
 				YYERROR;
 			pFilter->m_dValues = *$4.m_pValues.Ptr();
 			pFilter->m_dValues.Uniq();
-			pFilter->m_sRefString = pParser->m_pBuf;
 		}
-	| expr_ident TOK_NOT TOK_IN '(' const_list_or_string_list ')'
+	| expr_ident TOK_NOT TOK_IN '(' const_list ')'
 		{
 			CSphFilterSettings * pFilter = pParser->AddValuesFilter ( $1 );
 			if ( !pFilter )
 				YYERROR;
 			pFilter->m_dValues = *$5.m_pValues.Ptr();
-			pFilter->m_bExclude = true;
 			pFilter->m_dValues.Uniq();
-			pFilter->m_sRefString = pParser->m_pBuf;
+			pFilter->m_bExclude = true;
+		}
+	| expr_ident TOK_IN '(' string_list ')'
+		{
+			if ( !pParser->AddStringListFilter ( $1, $4, false ) )
+				YYERROR;
+		}
+	| expr_ident TOK_NOT TOK_IN '(' string_list ')'
+		{
+			if ( !pParser->AddStringListFilter ( $1, $5, true ) )
+				YYERROR;
 		}
 	| expr_ident TOK_IN TOK_USERVAR
 		{
@@ -626,11 +631,6 @@ string_list:
 		}
 	;
 
-const_list_or_string_list:
-	const_list
-	| string_list
-	;
-
 opt_group_clause:
 	// empty
 	| TOK_GROUP opt_int TOK_BY group_items_list
@@ -752,9 +752,9 @@ option_item:
 		}
 	| ident '=' '(' named_const_list ')'
 		{
-			if ( !pParser->AddOption ( $1, pParser->GetNamedVec ( $4 ) ) )
+			if ( !pParser->AddOption ( $1, pParser->GetNamedVec ( $4.m_iValue ) ) )
 				YYERROR;
-			pParser->FreeNamedVec ( $4 );
+			pParser->FreeNamedVec ( $4.m_iValue );
 		}
 	| ident '=' ident '(' TOK_QUOTED_STRING ')'
 		{
@@ -771,12 +771,12 @@ option_item:
 named_const_list:
 	named_const
 		{
-			$$ = pParser->AllocNamedVec ();
-			pParser->AddConst ( $$, $1 );
+			$$.m_iValue = pParser->AllocNamedVec ();
+			pParser->AddConst ( $$.m_iValue, $1 );
 		}
 	| named_const_list ',' named_const
 		{
-			pParser->AddConst( $$, $3 );
+			pParser->AddConst( $$.m_iValue, $3 );
 		}
 	;
 
@@ -1376,16 +1376,16 @@ create_function:
 			tStmt.m_eStmt = STMT_CREATE_FUNCTION;
 			pParser->ToString ( tStmt.m_sUdfName, $3 );
 			pParser->ToStringUnescape ( tStmt.m_sUdfLib, $7 );
-			tStmt.m_eUdfType = (ESphAttr) $5;
+			tStmt.m_eUdfType = (ESphAttr) $5.m_iValue;
 		}
 	;
 
 udf_type:
-	TOK_INT			{ $$ = SPH_ATTR_INTEGER; }
-	| TOK_BIGINT	{ $$ = SPH_ATTR_BIGINT; }
-	| TOK_FLOAT		{ $$ = SPH_ATTR_FLOAT; }
-	| TOK_STRING	{ $$ = SPH_ATTR_STRINGPTR; }
-	| TOK_INTEGER	{ $$ = SPH_ATTR_INTEGER; }
+	TOK_INT			{ $$.m_iValue = SPH_ATTR_INTEGER; }
+	| TOK_BIGINT	{ $$.m_iValue = SPH_ATTR_BIGINT; }
+	| TOK_FLOAT		{ $$.m_iValue = SPH_ATTR_FLOAT; }
+	| TOK_STRING	{ $$.m_iValue = SPH_ATTR_STRINGPTR; }
+	| TOK_INTEGER	{ $$.m_iValue = SPH_ATTR_INTEGER; }
 	;
 
 
@@ -1441,16 +1441,24 @@ flush_index:
 //////////////////////////////////////////////////////////////////////////
 
 select_sysvar:
-	TOK_SELECT sysvar_name opt_limit_clause
+	TOK_SELECT sysvar_list opt_limit_clause
 		{
 			pParser->m_pStmt->m_eStmt = STMT_SELECT_SYSVAR;
 			pParser->ToString ( pParser->m_pStmt->m_tQuery.m_sQuery, $2 );
 		}
 	;
-	
+
+sysvar_list:
+	sysvar_item
+	| sysvar_list ',' sysvar_item
+	;
+
+sysvar_item:
+	sysvar_name opt_alias
+	;
+
 sysvar_name:
-	TOK_SYSVAR
-	| TOK_SYSVAR '.' ident
+	TOK_SYSVAR { pParser->AddItem ( &$1 ); }
 	;
 
 select_dual:
