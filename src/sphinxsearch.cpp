@@ -1,10 +1,10 @@
 //
-// $Id: sphinxsearch.cpp 4682 2014-05-08 08:27:46Z kevg $
+// $Id$
 //
 
 //
-// Copyright (c) 2001-2014, Andrew Aksyonoff
-// Copyright (c) 2008-2014, Sphinx Technologies Inc
+// Copyright (c) 2001-2015, Andrew Aksyonoff
+// Copyright (c) 2008-2015, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -99,47 +99,65 @@ struct ExtQword_t
 /// query words set
 typedef CSphOrderedHash < ExtQword_t, CSphString, QwordsHash_fn, 256 > ExtQwordsHash_t;
 
+struct ZoneHits_t
+{
+	CSphVector<Hitpos_t>	m_dStarts;
+	CSphVector<Hitpos_t>	m_dEnds;
+};
+
 /// per-document zone information (span start/end positions)
 struct ZoneInfo_t
 {
-	CSphVector<Hitpos_t> m_dStarts;
-	CSphVector<Hitpos_t> m_dEnds;
-};
-
-
-/// zone hash key, zoneid+docid
-struct ZoneKey_t
-{
-	int				m_iZone;
 	SphDocID_t		m_uDocid;
-
-	explicit ZoneKey_t ( int iZone=0, SphDocID_t uDocid=0 )
-		: m_iZone ( iZone )
-		, m_uDocid ( uDocid )
-	{}
-
-	bool operator == ( const ZoneKey_t & rhs ) const
-	{
-		return m_iZone==rhs.m_iZone && m_uDocid==rhs.m_uDocid;
-	}
+	ZoneHits_t *	m_pHits;
 };
 
-
-/// zone hashing function
-struct ZoneHash_fn
+// FindSpan vector operators
+static bool operator < ( const ZoneInfo_t & tZone, SphDocID_t uDocid )
 {
-	static inline int Hash ( const ZoneKey_t & tKey )
-	{
-		return (DWORD)tKey.m_uDocid ^ ( tKey.m_iZone<<16 );
-	}
+	return tZone.m_uDocid<uDocid;
+}
+
+static bool operator == ( const ZoneInfo_t & tZone, SphDocID_t uDocid )
+{
+	return tZone.m_uDocid==uDocid;
+}
+
+static bool operator < ( SphDocID_t uDocid, const ZoneInfo_t & tZone )
+{
+	return uDocid<tZone.m_uDocid;
+}
+
+static void PrintDocsChunk ( int QDEBUGARG(iCount), int QDEBUGARG(iAtomPos), const ExtDoc_t * QDEBUGARG(pDocs), const char * QDEBUGARG(sNode), void * QDEBUGARG(pNode) )
+{
+#if QDEBUG
+	CSphStringBuilder tRes;
+	tRes.Appendf ( "node %s 0x%x:%p getdocs (%d) = [", sNode ? sNode : "???", iAtomPos, pNode, iCount );
+	for ( int i=0; i<iCount; i++ )
+		tRes.Appendf ( i ? ", 0x%x" : "0x%x", DWORD ( pDocs[i].m_uDocid ) );
+	tRes.Appendf ( "]" );
+	printf ( "%s", tRes.cstr() );
+#endif
+}
+
+static void PrintHitsChunk ( int QDEBUGARG(iCount), int QDEBUGARG(iAtomPos), const ExtHit_t * QDEBUGARG(pHits), const char * QDEBUGARG(sNode), void * QDEBUGARG(pNode) )
+{
+#if QDEBUG
+	CSphStringBuilder tRes;
+	tRes.Appendf ( "node %s 0x%x:%p gethits (%d) = [", sNode ? sNode : "???", iAtomPos, pNode, iCount );
+	for ( int i=0; i<iCount; i++ )
+		tRes.Appendf ( i ? ", 0x%x:0x%x" : "0x%x:0x%x", DWORD ( pHits[i].m_uDocid ), DWORD ( pHits[i].m_uHitpos ) );
+	tRes.Appendf ( "]" );
+	printf ( "%s", tRes.cstr() );
+#endif
+}
+
+
+struct TermPos_t
+{
+	WORD m_uQueryPos;
+	WORD m_uAtomPos;
 };
-
-
-/// zone hash
-typedef CSphOrderedHash < ZoneInfo_t, ZoneKey_t, ZoneHash_fn, 4096 > ZoneHash_c;
-
-/// zonespan prototype
-typedef CSphOrderedHash < int, ZoneKey_t, ZoneHash_fn, 8192*1024 > ZoneSpans_c;
 
 
 /// generic match streamer
@@ -155,14 +173,15 @@ public:
 
 	virtual void				Reset ( const ISphQwordSetup & tSetup ) = 0;
 	virtual void				HintDocid ( SphDocID_t uMinID ) = 0;
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID ) = 0;
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID ) = 0;
+	virtual const ExtDoc_t *	GetDocsChunk() = 0;
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs ) = 0;
 
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords ) = 0;
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords ) = 0;
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const = 0;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const = 0;
 	virtual bool				GotHitless () = 0;
 	virtual int					GetDocsCount () { return INT_MAX; }
+	virtual int					GetHitsCount () { return 0; }
 	virtual uint64_t			GetWordID () const = 0;			///< for now, only used for duplicate keyword checks in quorum operator
 
 	void DebugIndent ( int iLevel )
@@ -201,7 +220,6 @@ protected:
 	ExtHit_t					m_dHits[MAX_HITS];
 
 public:
-	SphDocID_t					m_uMaxID;
 	int							m_iStride;		///< docinfo stride (for inline mode only)
 
 protected:
@@ -217,103 +235,34 @@ protected:
 	}
 
 protected:
-	inline const ExtDoc_t * ReturnDocsChunk ( int iCount, SphDocID_t * pMaxID, const char * QDEBUGARG(sNode) )
+	inline const ExtDoc_t * ReturnDocsChunk ( int iCount, const char * sNode )
 	{
 		assert ( iCount>=0 && iCount<MAX_DOCS );
 		m_dDocs[iCount].m_uDocid = DOCID_MAX;
 
-		m_uMaxID = iCount ? m_dDocs[iCount-1].m_uDocid : 0;
-		if ( pMaxID ) *pMaxID = m_uMaxID;
-
-		#if QDEBUG
-		printf ( "qdebug: node %s %d:%08x getdocs = [", sNode ? sNode : "???", m_iAtomPos, int(this) );
-		for ( int i=0; i<iCount; i++ )
-			printf ( i ? ", %d" : "%d", int ( m_dDocs[i].m_uDocid ) );
-		printf ( "]\n" );
-		#endif
-
+		PrintDocsChunk ( iCount, m_iAtomPos, m_dDocs, sNode, this );
 		return iCount ? m_dDocs : NULL;
 	}
 
-	inline const ExtHit_t * ReturnHitsChunk ( int iCount, const char * QDEBUGARG(sNode) )
+	inline const ExtHit_t * ReturnHitsChunk ( int iCount, const char * sNode )
 	{
 		assert ( iCount>=0 && iCount<MAX_HITS );
 		m_dHits[iCount].m_uDocid = DOCID_MAX;
 
-		#if QDEBUG
-		printf ( "qdebug: node %s %d:%08x gethits = [", sNode ? sNode : "???", m_iAtomPos, int(this) );
-		for ( int i=0; i<iCount; i++ )
-			printf ( i ? ", %d:%d.%d" : "%d:%d.%d", int ( m_dHits[i].m_uDocid ),
-			HITMAN::GetField ( m_dHits[i].m_uHitpos ), HITMAN::GetPos ( m_dHits[i].m_uHitpos ) );
-		printf ( "]\n" );
-		#endif
+#ifndef NDEBUG
+		for ( int i=1; i<iCount; i++ )
+		{
+			assert ( m_dHits[i-1].m_uDocid!=m_dHits[i].m_uDocid ||
+					( m_dHits[i-1].m_uHitpos<m_dHits[i].m_uHitpos || ( m_dHits[i-1].m_uHitpos==m_dHits[i].m_uHitpos && m_dHits[i-1].m_uQuerypos<=m_dHits[i].m_uQuerypos ) ) );
+		}
+#endif
 
+		PrintHitsChunk ( iCount, m_iAtomPos, m_dHits, sNode, this );
 		return iCount ? m_dHits : NULL;
 	}
 };
 
 //////////////////////////////////////////////////////////////////////////
-class ZoneSpansHolder
-{
-	int	*						m_pZoneVec;
-
-public:
-	int							m_iNumZones;
-
-public:
-	explicit ZoneSpansHolder ( int iNumZones )
-		: m_pZoneVec ( NULL )
-		, m_iNumZones ( 0 )
-	{
-		Init ( iNumZones );
-	}
-	ZoneSpansHolder ()
-		: m_pZoneVec ( NULL )
-		, m_iNumZones ( 0 )
-	{}
-
-	void Init ( int iNumZones )
-	{
-		assert ( !m_pZoneVec );
-		assert ( iNumZones );
-
-		m_iNumZones = iNumZones;
-		m_pZoneVec = new int [ iNumZones*ExtNode_i::MAX_HITS ];
-		ResetZones();
-	}
-
-public:
-	~ZoneSpansHolder()
-	{
-		SafeDeleteArray ( m_pZoneVec );
-	}
-
-	inline void ResetZones ()
-	{
-		assert ( m_pZoneVec );
-		for ( int i=0; i<m_iNumZones*ExtNode_i::MAX_HITS; i++ )
-			m_pZoneVec[i] = -1;
-	}
-
-	inline int GetRowByteSize() const
-	{
-		return m_iNumZones*sizeof(int); //NOLINT
-	}
-
-	inline int * GetZVec ( int iPos ) const
-	{
-		assert ( iPos>=0 );
-		assert ( iPos<ExtNode_i::MAX_HITS );
-		return m_pZoneVec+(iPos*m_iNumZones);
-	}
-
-	inline void CopyZVecTo ( int iSrc, int * pDest ) const
-	{
-		assert ( pDest );
-		memcpy ( pDest, GetZVec ( iSrc ), GetRowByteSize() );
-	}
-};
-
 
 /// single keyword streamer
 class ExtTerm_c : public ExtNode_i, ISphNoncopyable
@@ -329,14 +278,15 @@ public:
 
 	void						Init ( ISphQword * pQword, const FieldMask_t& uFields, const ISphQwordSetup & tSetup, bool bNotWeighted );
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const;
 	virtual bool				GotHitless () { return false; }
 	virtual int					GetDocsCount () { return m_pQword->m_iDocs; }
+	virtual int					GetHitsCount () { return m_pQword->m_iHits; }
 	virtual uint64_t			GetWordID () const
 	{
 		if ( m_pQword->m_uWordID )
@@ -421,7 +371,7 @@ public:
 	{}
 
 	virtual void				Reset ( const ISphQwordSetup & ) { m_uFieldPos = 0; }
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	virtual bool				GotHitless () { return true; }
 
 protected:
@@ -430,16 +380,9 @@ protected:
 
 //////////////////////////////////////////////////////////////////////////
 
-class HitPointer
-{
-protected:
-	inline void					SetMyHit ( int, bool = false ) {}
-	inline void					CopyMyHit ( int, int ) {}
-};
-
 /// position filter policy
 template < TermPosFilter_e T >
-class TermAcceptor_c : protected HitPointer
+class TermAcceptor_c
 {
 public:
 								TermAcceptor_c ( ISphQword *, const XQNode_t *, const ISphQwordSetup & ) {}
@@ -449,7 +392,7 @@ protected:
 };
 
 template<>
-class TermAcceptor_c<TERM_POS_FIELD_LIMIT> : protected HitPointer
+class TermAcceptor_c<TERM_POS_FIELD_LIMIT> : public ISphNoncopyable
 {
 public:
 	TermAcceptor_c ( ISphQword *, const XQNode_t * pNode, const ISphQwordSetup & )
@@ -457,16 +400,13 @@ public:
 	{}
 protected:
 	inline bool					IsAcceptableHit ( const ExtHit_t * ) const;
-	inline void					Reset()
-	{
-		m_iMaxFieldPos = 0;
-	}
+	inline void					Reset() {}
 private:
-	int							m_iMaxFieldPos;
+	const int					m_iMaxFieldPos;
 };
 
 template<>
-class TermAcceptor_c<TERM_POS_ZONES> : protected HitPointer
+class TermAcceptor_c<TERM_POS_ZONES> : public ISphNoncopyable
 {
 public:
 								TermAcceptor_c ( ISphQword *, const XQNode_t * pNode, const ISphQwordSetup & tSetup )
@@ -489,63 +429,18 @@ protected:
 	mutable int					m_iCheckFrom;
 };
 
-
-template<>
-class TermAcceptor_c<TERM_POS_ZONESPAN> : public TermAcceptor_c<TERM_POS_ZONES>
-{
-public:
-	TermAcceptor_c ( ISphQword * pWord, const XQNode_t * pNode, const ISphQwordSetup & tSetup )
-		: TermAcceptor_c<TERM_POS_ZONES> ( pWord, pNode, tSetup)
-		, m_iMyHit ( -1 )
-		, m_bFinal ( false )
-		, m_dMyZones ( pNode->m_dSpec.m_dZones.GetLength() )
-		, m_dFinalZones ( pNode->m_dSpec.m_dZones.GetLength() )
-	{}
-
-protected:
-	inline bool					IsAcceptableHit ( const ExtHit_t * pHit ) const;
-	inline void					Reset()
-	{
-		TermAcceptor_c<TERM_POS_ZONES>::Reset();
-		m_dMyZones.ResetZones();
-		m_dFinalZones.ResetZones();
-	}
-
-	inline void					SetMyHit ( int iHit, bool bFinal = false ) { m_iMyHit = iHit; m_bFinal = bFinal;}
-	inline void					CopyMyHit ( int iSrc, int iDst ) { m_dMyZones.CopyZVecTo ( iSrc, m_dFinalZones.GetZVec ( iDst ) ); }
-
-private:
-	int							m_iMyHit;	///< the current num of hit in internal buffer
-	bool						m_bFinal;	///< whether we point to our buffer, or temporary one for filtered zones
-protected:
-	ZoneSpansHolder				m_dMyZones;	///< extra buffer for filtered zones
-	ZoneSpansHolder 			m_dFinalZones; ///< the actual buffer of the linked node
-};
-
-template<>
-class TermAcceptor_c<TERM_POS_NONE> : public TermAcceptor_c<TERM_POS_ZONESPAN>
-{
-public:
-	TermAcceptor_c ( ISphQword * pWord, const XQNode_t * pNode, const ISphQwordSetup & tSetup )
-		: TermAcceptor_c<TERM_POS_ZONESPAN> ( pWord, pNode, tSetup)
-	{}
-
-protected:
-	inline bool					IsAcceptableHit ( const ExtHit_t * ) const { return true; }
-};
-
 ///
 class BufferedNode_c
 {
 protected:
 	BufferedNode_c ()
-		: m_uTermMaxID ( 0 )
-		, m_pRawDocs ( NULL )
+		: m_pRawDocs ( NULL )
 		, m_pRawDoc ( NULL )
 		, m_pRawHit ( NULL )
 		, m_uLastID ( 0 )
 		, m_eState ( COPY_DONE )
 		, m_uDoneFor ( 0 )
+		, m_uHitStartDocid ( 0 )
 		{
 			m_dMyDocs[0].m_uDocid = DOCID_MAX;
 			m_dMyHits[0].m_uDocid = DOCID_MAX;
@@ -554,20 +449,19 @@ protected:
 
 	void Reset ()
 	{
-		m_uTermMaxID = 0;
 		m_pRawDocs = NULL;
 		m_pRawDoc = NULL;
 		m_pRawHit = NULL;
 		m_uLastID = 0;
 		m_eState = COPY_DONE;
 		m_uDoneFor = 0;
+		m_uHitStartDocid = 0;
 		m_dMyDocs[0].m_uDocid = DOCID_MAX;
 		m_dMyHits[0].m_uDocid = DOCID_MAX;
 		m_dFilteredHits[0].m_uDocid = DOCID_MAX;
 	}
 
 protected:
-	SphDocID_t					m_uTermMaxID;
 	const ExtDoc_t *			m_pRawDocs;					///< chunk start as returned by raw GetDocsChunk() (need to store it for raw GetHitsChunk() calls)
 	const ExtDoc_t *			m_pRawDoc;					///< current position in raw docs chunk
 	const ExtHit_t *			m_pRawHit;					///< current position in raw hits chunk
@@ -582,6 +476,7 @@ protected:
 	ExtHit_t					m_dMyHits[ExtNode_i::MAX_HITS];		///< all hits within the required pos range
 	ExtHit_t					m_dFilteredHits[ExtNode_i::MAX_HITS];	///< hits from requested subset of the documents (for GetHitsChunk())
 	SphDocID_t					m_uDoneFor;
+	SphDocID_t					m_uHitStartDocid;
 };
 
 /// single keyword streamer, with term position filtering
@@ -593,8 +488,8 @@ protected:
 								ExtConditional ( ISphQword * pQword, const XQNode_t * pNode, const ISphQwordSetup & tSetup );
 public:
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	virtual bool				GotHitless () { return false; }
 
 private:
@@ -614,18 +509,6 @@ public:
 };
 
 
-template<>
-bool ExtConditional<TERM_POS_ZONESPAN>::ExtraDataImpl ( ExtraData_e eData, void ** ppResult )
-{
-	assert ( ppResult );
-	if ( eData==EXTRA_GET_DATA_ZONESPANS )
-	{
-		*ppResult = &m_dFinalZones;
-		return true;
-	}
-	return false;
-}
-
 template<TermPosFilter_e T, class ExtBase>
 bool ExtConditional<T,ExtBase>::ExtraDataImpl ( ExtraData_e, void ** )
 {
@@ -644,7 +527,7 @@ public:
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const;
 
 	virtual bool				GotHitless () { return m_pChildren[0]->GotHitless() || m_pChildren[1]->GotHitless(); }
 
@@ -660,7 +543,6 @@ public:
 	{
 		m_dNodePos[0] = uPosLeft;
 		m_dNodePos[1] = uPosRight;
-		m_bPosAware = true;
 	}
 
 	virtual void HintDocid ( SphDocID_t uMinID )
@@ -679,7 +561,6 @@ protected:
 	const ExtDoc_t *			m_pCurDoc[2];
 	const ExtHit_t *			m_pCurHit[2];
 	WORD						m_dNodePos[2];
-	bool						m_bPosAware;
 	SphDocID_t					m_uMatchedDocid;
 };
 
@@ -689,57 +570,34 @@ class ExtAnd_c : public ExtTwofer_c
 public:
 								ExtAnd_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup ) : ExtTwofer_c ( pFirst, pSecond, tSetup ) {}
 								ExtAnd_c() {} ///< to be used with Init()
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 
 	void DebugDump ( int iLevel ) { DebugDumpT ( "ExtAnd", iLevel ); }
 };
 
-class ExtAndZonespanned : public ExtAnd_c
+class ExtAndZonespanned_c : public ExtAnd_c
 {
 public:
-	ExtAndZonespanned () {} ///< to be used in pair with Init()
-	inline void						Init ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup, ZoneSpansHolder * pSpans )
-	{
-		ExtAnd_c::Init ( pFirst, pSecond, tSetup );
-		m_pSpans = pSpans;
-		m_pLastBaseHit[0] = NULL;
-		m_pLastBaseHit[1] = NULL;
-		if ( pFirst && !pFirst->GetExtraData ( EXTRA_GET_DATA_ZONESPANS, (void**) &m_dChildzones[0] ) )
-			assert ( false );
-		if ( pSecond && !pSecond->GetExtraData ( EXTRA_GET_DATA_ZONESPANS, (void**) &m_dChildzones[1] ) )
-			assert ( false );
-	}
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	void DebugDump ( int iLevel ) { DebugDumpT ( "ExtAndZonespan", iLevel ); }
 
-private:
-	ZoneSpansHolder *			m_dChildzones[2];
-	ZoneSpansHolder	*			m_pSpans;
-	const ExtHit_t *			m_pLastBaseHit[2];
+protected:
+	bool IsSameZonespan ( const ExtHit_t * pHit1, const ExtHit_t * pHit2 ) const;
 
-private:
-	bool IsSameZonespan ( int iHit, int iProofHit ) const;
+	ISphZoneCheck * m_pZoneChecker;
+	CSphVector<int> m_dZones;
 };
 
-class ExtAndZonespan_c : public ExtConditional < TERM_POS_NONE, ExtAndZonespanned >
+class ExtAndZonespan_c : public ExtConditional < TERM_POS_NONE, ExtAndZonespanned_c >
 {
 public:
-	ExtAndZonespan_c ( ExtNode_i *pFirst, ExtNode_i *pSecond, const ISphQwordSetup & tSetup, const XQNode_t * pNode )
-		: ExtConditional<TERM_POS_NONE,ExtAndZonespanned> ( NULL, pNode, tSetup )
+	ExtAndZonespan_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup, const XQNode_t * pNode )
+		: ExtConditional<TERM_POS_NONE,ExtAndZonespanned_c> ( NULL, pNode, tSetup )
 	{
-		ExtAndZonespanned::Init ( pFirst, pSecond, tSetup, &m_dMyZones );
-	}
-private:
-	bool ExtraDataImpl ( ExtraData_e eData, void ** ppResult )
-	{
-		assert ( ppResult );
-		if ( eData==EXTRA_GET_DATA_ZONESPANS )
-		{
-			*ppResult = &m_dFinalZones;
-			return true;
-		}
-		return false;
+		Init ( pFirst, pSecond, tSetup );
+		m_pZoneChecker = tSetup.m_pZoneChecker;
+		m_dZones = pNode->m_dSpec.m_dZones;
 	}
 };
 
@@ -748,8 +606,8 @@ class ExtOr_c : public ExtTwofer_c
 {
 public:
 								ExtOr_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup ) : ExtTwofer_c ( pFirst, pSecond, tSetup ) {}
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 
 	void DebugDump ( int iLevel ) { DebugDumpT ( "ExtOr", iLevel ); }
 };
@@ -760,7 +618,7 @@ class ExtMaybe_c : public ExtOr_c
 {
 public:
 								ExtMaybe_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup ) : ExtOr_c ( pFirst, pSecond, tSetup ) {}
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
 
 	void DebugDump ( int iLevel ) { DebugDumpT ( "ExtMaybe", iLevel ); }
 };
@@ -771,8 +629,8 @@ class ExtAndNot_c : public ExtTwofer_c
 {
 public:
 								ExtAndNot_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQwordSetup & tSetup );
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
 
 	void DebugDump ( int iLevel ) { DebugDumpT ( "ExtAndNot", iLevel ); }
@@ -791,7 +649,7 @@ public:
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const;
 	virtual bool				GotHitless () { return false; }
 	virtual void				HintDocid ( SphDocID_t uMinID ) { m_pNode->HintDocid ( uMinID ); }
 	virtual uint64_t			GetWordID () const;
@@ -799,7 +657,6 @@ public:
 protected:
 	ExtNode_i *					m_pNode;				///< my and-node for all the terms
 	const ExtDoc_t *			m_pDocs;				///< current docs chunk from and-node
-	SphDocID_t					m_uDocsMaxID;			///< max id in current docs chunk
 	const ExtHit_t *			m_pHits;				///< current hits chunk from and-node
 	const ExtDoc_t *			m_pDoc;					///< current doc from and-node
 	const ExtHit_t *			m_pHit;					///< current hit from and-node
@@ -871,18 +728,16 @@ public:
 		: ExtNWayT ( dNodes, tSetup )
 		, FSM ( dNodes, tNode, tSetup )
 	{
-		bool bTerms = FSM::bTermsTree; // workaround MSVC const condition warning
 		CSphVector<WORD> dPositions ( dNodes.GetLength() );
 		ARRAY_FOREACH ( i, dPositions )
 			dPositions[i] = (WORD) i;
-		if ( bTerms )
-			dPositions.Sort ( ExtNodeTFExt_fn ( dNodes ) );
+		dPositions.Sort ( ExtNodeTFExt_fn ( dNodes ) );
 		ConstructNode ( dNodes, dPositions, tSetup );
 	}
 
 public:
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	virtual void DebugDump ( int iLevel )
 	{
 		DebugIndent ( iLevel );
@@ -903,8 +758,6 @@ protected:
 	};
 
 protected:
-	static const bool			bTermsTree = true;		///< we work with ExtTerm nodes
-
 								FSMphrase ( const CSphVector<ExtNode_i *> & dQwords, const XQNode_t & tNode, const ISphQwordSetup & tSetup );
 	bool						HitFSM ( const ExtHit_t* pHit, ExtHit_t* dTarget );
 
@@ -927,8 +780,6 @@ typedef ExtNWay_c < FSMphrase > ExtPhrase_c;
 class FSMproximity
 {
 protected:
-	static const bool			bTermsTree = true;		///< we work with ExtTerm nodes
-
 								FSMproximity ( const CSphVector<ExtNode_i *> & dQwords, const XQNode_t & tNode, const ISphQwordSetup & tSetup );
 	bool						HitFSM ( const ExtHit_t* pHit, ExtHit_t* dTarget );
 
@@ -961,8 +812,6 @@ typedef ExtNWay_c<FSMproximity> ExtProximity_c;
 class FSMmultinear
 {
 protected:
-	static const bool			bTermsTree = true;	///< we work with generic (not just ExtTerm) nodes
-
 								FSMmultinear ( const CSphVector<ExtNode_i *> & dNodes, const XQNode_t & tNode, const ISphQwordSetup & tSetup );
 	bool						HitFSM ( const ExtHit_t * pHit, ExtHit_t * dTarget );
 
@@ -1019,12 +868,12 @@ public:
 	virtual						~ExtQuorum_c ();
 
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const;
 	virtual uint64_t			GetWordID () const;
 
 	virtual bool				GotHitless () { return false; }
@@ -1061,9 +910,9 @@ private:
 
 	// check for hits that matches and return flag that docs might be advanced
 	bool						CollectMatchingHits ( SphDocID_t uDocid, int iQuorum );
-	const ExtHit_t *			GetHitsChunkDupes ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	const ExtHit_t *			GetHitsChunkDupes ( const ExtDoc_t * pDocs );
 	const ExtHit_t *			GetHitsChunkDupesTail ();
-	const ExtHit_t *			GetHitsChunkSimple ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	const ExtHit_t *			GetHitsChunkSimple ( const ExtDoc_t * pDocs );
 
 	int							CountQuorum ( bool bFixDupes )
 	{
@@ -1080,7 +929,7 @@ private:
 
 		#if QDEBUG
 		if ( bFixDupes && bHasDupes!=m_bHasDupes )
-			printf ( "qdebug: quorum dupes %d -> %d\n", m_bHasDupes, bHasDupes );
+			printf ( "quorum dupes %d -> %d\n", m_bHasDupes, bHasDupes );
 		#endif
 
 		m_bHasDupes = bFixDupes ? bHasDupes : m_bHasDupes;
@@ -1097,11 +946,11 @@ public:
 								~ExtOrder_c ();
 
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const;
 	virtual bool				GotHitless () { return false; }
 	virtual uint64_t			GetWordID () const;
 
@@ -1116,7 +965,6 @@ protected:
 	CSphVector<const ExtDoc_t*>	m_pDocsChunk;	///< last document chunk (for hit fetching)
 	CSphVector<const ExtDoc_t*>	m_pDocs;		///< current position in document chunk
 	CSphVector<const ExtHit_t*>	m_pHits;		///< current position in hits chunk
-	CSphVector<SphDocID_t>		m_dMaxID;		///< max DOCID from the last chunk
 	ExtHit_t					m_dMyHits[MAX_HITS];	///< buffer for all my phrase hits; inherited m_dHits will receive filtered results
 	bool						m_bDone;
 	SphDocID_t					m_uHitsOverFor;
@@ -1135,12 +983,12 @@ public:
 	ExtUnit_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const FieldMask_t& dFields, const ISphQwordSetup & tSetup, const char * sUnit );
 	~ExtUnit_c ();
 
-	virtual const ExtDoc_t *	GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID );
+	virtual const ExtDoc_t *	GetDocsChunk();
+	virtual const ExtHit_t *	GetHitsChunk ( const ExtDoc_t * pDocs );
 	virtual void				Reset ( const ISphQwordSetup & tSetup );
 	virtual int					GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void				SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void				GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const;
+	virtual void				GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const;
 	virtual uint64_t			GetWordID () const;
 
 public:
@@ -1164,12 +1012,12 @@ public:
 	}
 
 protected:
-	inline const ExtDoc_t * ReturnDocsChunk ( int iDocs, int iMyHit, SphDocID_t * pMaxID )
+	inline const ExtDoc_t * ReturnDocsChunk ( int iDocs, int iMyHit )
 	{
 		assert ( iMyHit<MAX_HITS );
 		m_dMyHits[iMyHit].m_uDocid = DOCID_MAX;
 		m_uHitsOverFor = 0;
-		return ExtNode_i::ReturnDocsChunk ( iDocs, pMaxID, "unit" );
+		return ExtNode_i::ReturnDocsChunk ( iDocs, "unit" );
 	}
 
 protected:
@@ -1198,7 +1046,7 @@ private:
 };
 
 
-
+typedef CSphFixedVector < CSphVector < ZoneInfo_t > > ZoneVVector_t;
 
 /// ranker interface
 /// ranker folds incoming hitstream into simple match chunks, and computes relevance rank
@@ -1219,7 +1067,7 @@ public:
 
 public:
 	// FIXME? hide and friend?
-	virtual SphZoneHit_e		IsInZone ( int iZone, const ExtHit_t * pHit, int * pLastSpan=0 );
+	virtual SphZoneHit_e		IsInZone ( int iZone, const ExtHit_t * pHit, int * pLastSpan );
 	virtual const CSphIndex *	GetIndex() { return m_pIndex; }
 
 public:
@@ -1229,11 +1077,11 @@ public:
 	int							m_iMaxQpos;							///< max in-query pos among all keywords, including dupes; for ranker state functors
 
 protected:
+	void						CleanupZones ( SphDocID_t uMaxDocid );
 	int							m_iInlineRowitems;
 	ExtNode_i *					m_pRoot;
 	const ExtDoc_t *			m_pDoclist;
 	const ExtHit_t *			m_pHitlist;
-	SphDocID_t					m_uMaxID;
 	ExtDoc_t					m_dMyDocs[ExtNode_i::MAX_DOCS];		///< my local documents pool; for filtering
 	CSphMatch					m_dMyMatches[ExtNode_i::MAX_DOCS];	///< my local matches pool; for filtering
 	CSphMatch					m_tTestMatch;
@@ -1249,7 +1097,7 @@ protected:
 	CSphVector<const ExtDoc_t*>	m_dZoneEnd;
 	CSphVector<SphDocID_t>		m_dZoneMax;				///< last docid we (tried) to cache
 	CSphVector<SphDocID_t>		m_dZoneMin;				///< first docid we (tried) to cache
-	ZoneHash_c					m_hZoneInfo;
+	ZoneVVector_t				m_dZoneInfo;
 	bool						m_bZSlist;
 };
 
@@ -1291,7 +1139,6 @@ class ExtRanker_T : public ExtRanker_c
 {
 protected:
 	STATE			m_tState;
-	ZoneSpansHolder *	m_pZones;
 	const ExtHit_t *	m_pHitBase;
 	CSphVector<int>		m_dZonespans; // zonespanlists for my matches
 
@@ -1340,7 +1187,6 @@ static inline void CopyExtDoc ( ExtDoc_t & tDst, const ExtDoc_t & tSrc, CSphRowi
 
 ExtNode_i::ExtNode_i ()
 	: m_iAtomPos ( 0 )
-	, m_uMaxID ( 0 )
 	, m_iStride ( 0 )
 	, m_pDocinfo ( NULL )
 {
@@ -1375,6 +1221,46 @@ static ISphQword * CreateQueryWord ( const XQKeyword_t & tWord, const ISphQwordS
 	return pWord;
 }
 
+struct AtomPosQWord_fn
+{
+	bool operator () ( ISphQword * ) const { return true; }
+};
+
+struct AtomPosExtNode_fn
+{
+	bool operator () ( ExtNode_i * pNode ) const { return !pNode->GotHitless(); }
+};
+
+template <typename T, typename NODE_CHECK>
+int CountAtomPos ( const CSphVector<T *> & dNodes, const NODE_CHECK & fnCheck )
+{
+	if ( dNodes.GetLength()<2 )
+		return dNodes.GetLength();
+
+	int iMinPos = INT_MAX;
+	int iMaxPos = 0;
+	ARRAY_FOREACH ( i, dNodes )
+	{
+		T * pNode = dNodes[i];
+		if ( fnCheck ( pNode ) )
+		{
+			iMinPos = Min ( pNode->m_iAtomPos, iMinPos );
+			iMaxPos = Max ( pNode->m_iAtomPos, iMaxPos );
+		}
+	}
+	if ( iMinPos==INT_MAX )
+		return 0;
+
+	CSphBitvec dAtomPos ( iMaxPos - iMinPos + 1 );
+	ARRAY_FOREACH ( i, dNodes )
+	{
+		if ( fnCheck ( dNodes[i] ) )
+			dAtomPos.BitSet ( dNodes[i]->m_iAtomPos - iMinPos );
+	}
+
+	return dAtomPos.BitCount();
+}
+
 
 template < typename T >
 static ExtNode_i * CreateMultiNode ( const XQNode_t * pQueryNode, const ISphQwordSetup & tSetup, bool bNeedsHitlist )
@@ -1386,29 +1272,48 @@ static ExtNode_i * CreateMultiNode ( const XQNode_t * pQueryNode, const ISphQwor
 	if ( pQueryNode->m_dChildren.GetLength() )
 	{
 		CSphVector<ExtNode_i *> dNodes;
+		CSphVector<ExtNode_i *> dTerms;
 		ARRAY_FOREACH ( i, pQueryNode->m_dChildren )
 		{
 			ExtNode_i * pTerm = ExtNode_i::Create ( pQueryNode->m_dChildren[i], tSetup );
 			assert ( !pTerm || pTerm->m_iAtomPos>=0 );
 			if ( pTerm )
-				dNodes.Add ( pTerm );
+			{
+				if ( !pTerm->GotHitless() )
+					dNodes.Add ( pTerm );
+				else
+					dTerms.Add ( pTerm );
+			}
 		}
 
-		if ( dNodes.GetLength()<2 )
+		int iAtoms = CountAtomPos ( dNodes, AtomPosExtNode_fn() );
+		if ( iAtoms<2 )
 		{
 			ARRAY_FOREACH ( i, dNodes )
 				SafeDelete ( dNodes[i] );
+			ARRAY_FOREACH ( i, dTerms )
+				SafeDelete ( dTerms[i] );
 			if ( tSetup.m_pWarning )
-				tSetup.m_pWarning->SetSprintf ( "can't create phrase node, hitlists unavailable (hitlists=%d, nodes=%d)", dNodes.GetLength(), pQueryNode->m_dChildren.GetLength() );
+				tSetup.m_pWarning->SetSprintf ( "can't create phrase node, hitlists unavailable (hitlists=%d, nodes=%d)", iAtoms, pQueryNode->m_dChildren.GetLength() );
 			return NULL;
 		}
 
 		// FIXME! tricky combo again
 		// quorum+expand used KeywordsEqual() path to drill down until actual nodes
 		ExtNode_i * pResult = new T ( dNodes, *pQueryNode, tSetup );
+
+		// AND result with the words that had no hitlist
+		if ( dTerms.GetLength () )
+		{
+			pResult = new ExtAnd_c ( pResult, dTerms[0], tSetup );
+			for ( int i=1; i<dTerms.GetLength (); i++ )
+				pResult = new ExtAnd_c ( pResult, dTerms[i], tSetup );
+		}
+
 		if ( pQueryNode->GetCount() )
 			return tSetup.m_pNodeCache->CreateProxy ( pResult, pQueryNode, tSetup );
-		return pResult; // FIXME! sorry, no hitless vs expand vs phrase support for now!
+
+		return pResult;
 	}
 
 	//////////////////////
@@ -1431,7 +1336,8 @@ static ExtNode_i * CreateMultiNode ( const XQNode_t * pQueryNode, const ISphQwor
 	}
 
 	// see if we can create the node
-	if ( dQwordsHit.GetLength()<2 )
+	int iAtoms = CountAtomPos ( dQwordsHit, AtomPosQWord_fn() );
+	if ( iAtoms<2 )
 	{
 		ARRAY_FOREACH ( i, dQwords )
 			SafeDelete ( dQwords[i] );
@@ -1439,7 +1345,7 @@ static ExtNode_i * CreateMultiNode ( const XQNode_t * pQueryNode, const ISphQwor
 			SafeDelete ( dQwordsHit[i] );
 		if ( tSetup.m_pWarning )
 			tSetup.m_pWarning->SetSprintf ( "can't create phrase node, hitlists unavailable (hitlists=%d, nodes=%d)",
-				dQwordsHit.GetLength(), dWords.GetLength() );
+				iAtoms, dWords.GetLength() );
 		return NULL;
 
 	} else
@@ -1518,7 +1424,7 @@ ExtNode_i * ExtNode_i::Create ( ISphQword * pQword, const XQNode_t * pNode, cons
 		pQword->m_iTermPos = TERM_POS_FIELD_LIMIT;
 
 	if ( pNode->m_dSpec.m_dZones.GetLength() )
-		pQword->m_iTermPos = pNode->m_dSpec.m_bZoneSpan ? TERM_POS_ZONESPAN : TERM_POS_ZONES;
+		pQword->m_iTermPos = TERM_POS_ZONES;
 
 	if ( !pQword->m_bHasHitlist )
 	{
@@ -1533,7 +1439,6 @@ ExtNode_i * ExtNode_i::Create ( ISphQword * pQword, const XQNode_t * pNode, cons
 		case TERM_POS_FIELD_END:		return new ExtTermPos_c<TERM_POS_FIELD_END> ( pQword, pNode, tSetup );
 		case TERM_POS_FIELD_LIMIT:		return new ExtTermPos_c<TERM_POS_FIELD_LIMIT> ( pQword, pNode, tSetup );
 		case TERM_POS_ZONES:			return new ExtTermPos_c<TERM_POS_ZONES> ( pQword, pNode, tSetup );
-		case TERM_POS_ZONESPAN:			return new ExtTermPos_c<TERM_POS_ZONESPAN> ( pQword, pNode, tSetup );
 		default:						return new ExtTerm_c ( pQword, pNode->m_dSpec.m_dFieldMask, tSetup, pNode->m_bNotWeighted );
 	}
 }
@@ -1577,12 +1482,12 @@ public:
 	explicit						ExtPayload_c ( const XQNode_t * pNode, const ISphQwordSetup & tSetup );
 	virtual void					Reset ( const ISphQwordSetup & tSetup );
 	virtual void					HintDocid ( SphDocID_t ) {} // FIXME!!! implement with tree
-	virtual const ExtDoc_t *		GetDocsChunk ( SphDocID_t * pMaxID );
-	virtual const ExtHit_t *		GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t );
+	virtual const ExtDoc_t *		GetDocsChunk();
+	virtual const ExtHit_t *		GetHitsChunk ( const ExtDoc_t * pDocs );
 
 	virtual int						GetQwords ( ExtQwordsHash_t & hQwords );
 	virtual void					SetQwordsIDF ( const ExtQwordsHash_t & hQwords );
-	virtual void					GetTermDupes ( const ExtQwordsHash_t & , CSphVector<WORD> & ) const;
+	virtual void					GetTerms ( const ExtQwordsHash_t &, CSphVector<TermPos_t> & ) const;
 	virtual bool					GotHitless () { return false; }
 	virtual int						GetDocsCount () { return m_tWord.m_iDocs; }
 	virtual uint64_t				GetWordID () const { return m_tWord.m_uWordID; }
@@ -1703,7 +1608,7 @@ void ExtPayload_c::Reset ( const ISphQwordSetup & tSetup )
 }
 
 
-const ExtDoc_t * ExtPayload_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtPayload_c::GetDocsChunk()
 {
 	m_iCurHit = m_iCurDocsEnd;
 	if ( m_iCurDocsEnd>=m_dCache.GetLength() )
@@ -1733,11 +1638,11 @@ const ExtDoc_t * ExtPayload_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	}
 	m_iCurDocsEnd = iEnd;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "payload" );
+	return ReturnDocsChunk ( iDoc, "payload" );
 }
 
 
-const ExtHit_t * ExtPayload_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t )
+const ExtHit_t * ExtPayload_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	if ( m_iCurHit>=m_iCurDocsEnd )
 		return NULL;
@@ -1813,13 +1718,16 @@ void ExtPayload_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 	}
 }
 
-void ExtPayload_c::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtPayload_c::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
 	if ( m_tWord.m_bExcluded )
 		return;
 
 	ExtQword_t & tQword = hQwords[ m_tWord.m_sWord ];
-	dTermDupes[m_tWord.m_iAtomPos] = (WORD)tQword.m_iQueryPos;
+
+	TermPos_t & tPos = dTermDupes.Add();
+	tPos.m_uAtomPos = (WORD)m_tWord.m_iAtomPos;
+	tPos.m_uQueryPos = (WORD)tQword.m_iQueryPos;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2066,15 +1974,13 @@ void ExtTerm_c::Reset ( const ISphQwordSetup & tSetup )
 	tSetup.QwordSetup ( m_pQword );
 }
 
-const ExtDoc_t * ExtTerm_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtTerm_c::GetDocsChunk()
 {
 	m_pLastChecked = m_dDocs;
 	m_bTail = false;
 
 	if ( !m_pQword->m_iDocs )
 		return NULL;
-
-	m_uMaxID = 0;
 
 	// max_query_time
 	if ( m_iMaxTimer>0 && sphMicroTimer()>=m_iMaxTimer )
@@ -2141,10 +2047,10 @@ const ExtDoc_t * ExtTerm_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	if ( m_pNanoBudget )
 		*m_pNanoBudget -= g_iPredictorCostDoc*iDoc;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "term" );
+	return ReturnDocsChunk ( iDoc, "term" );
 }
 
-const ExtHit_t * ExtTerm_c::GetHitsChunk ( const ExtDoc_t * pMatched, SphDocID_t uMaxID )
+const ExtHit_t * ExtTerm_c::GetHitsChunk ( const ExtDoc_t * pMatched )
 {
 	if ( !pMatched )
 		return NULL;
@@ -2158,10 +2064,6 @@ const ExtHit_t * ExtTerm_c::GetHitsChunk ( const ExtDoc_t * pMatched, SphDocID_t
 		// if we already emitted hits for this matches block, do not do that again
 		if ( pMatched->m_uDocid==m_uMatchChecked )
 			return NULL;
-
-		// early reject whole block
-		if ( pMatched->m_uDocid > m_uMaxID ) return NULL;
-		if ( m_uMaxID && m_dDocs[0].m_uDocid > uMaxID ) return NULL;
 
 		// find match
 		m_uMatchChecked = pMatched->m_uDocid;
@@ -2193,10 +2095,6 @@ const ExtHit_t * ExtTerm_c::GetHitsChunk ( const ExtDoc_t * pMatched, SphDocID_t
 			// no more hits; get next acceptable document
 			pDoc++;
 			m_pLastChecked = pDoc;
-
-			// we don't want to return hits for documents we haven't find yet
-			if ( uMaxID<m_pLastChecked->m_uDocid )
-				break;
 
 			do
 			{
@@ -2273,18 +2171,21 @@ void ExtTerm_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 	}
 }
 
-void ExtTerm_c::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtTerm_c::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
 	if ( m_bNotWeighted || m_pQword->m_bExcluded )
 		return;
 
 	ExtQword_t & tQword = hQwords[ m_pQword->m_sWord ];
-	dTermDupes[m_pQword->m_iAtomPos] = (WORD)tQword.m_iQueryPos;
+
+	TermPos_t & tPos = dTermDupes.Add ();
+	tPos.m_uAtomPos = (WORD)m_pQword->m_iAtomPos;
+	tPos.m_uQueryPos = (WORD)tQword.m_iQueryPos;
 }
 
 //////////////////////////////////////////////////////////////////////////
 
-const ExtHit_t * ExtTermHitless_c::GetHitsChunk ( const ExtDoc_t * pMatched, SphDocID_t uMaxID )
+const ExtHit_t * ExtTermHitless_c::GetHitsChunk ( const ExtDoc_t * pMatched )
 {
 	if ( !pMatched )
 		return NULL;
@@ -2298,10 +2199,6 @@ const ExtHit_t * ExtTermHitless_c::GetHitsChunk ( const ExtDoc_t * pMatched, Sph
 		// if we already emitted hits for this matches block, do not do that again
 		if ( pMatched->m_uDocid==m_uMatchChecked )
 			return NULL;
-
-		// early reject whole block
-		if ( pMatched->m_uDocid > m_uMaxID ) return NULL;
-		if ( m_uMaxID && m_dDocs[0].m_uDocid > uMaxID ) return NULL;
 
 		// find match
 		m_uMatchChecked = pMatched->m_uDocid;
@@ -2425,7 +2322,7 @@ inline bool TermAcceptor_c<TERM_POS_ZONES>::IsAcceptableHit ( const ExtHit_t * p
 	// only check zones that actually match this document
 	for ( int i=m_iCheckFrom; i<m_dZones.GetLength(); i++ )
 	{
-		SphZoneHit_e eState = m_pZoneChecker->IsInZone ( m_dZones[i], pHit );
+		SphZoneHit_e eState = m_pZoneChecker->IsInZone ( m_dZones[i], pHit, NULL );
 		switch ( eState )
 		{
 			case SPH_ZONE_FOUND:
@@ -2441,26 +2338,14 @@ inline bool TermAcceptor_c<TERM_POS_ZONES>::IsAcceptableHit ( const ExtHit_t * p
 	return false;
 }
 
-inline bool TermAcceptor_c<TERM_POS_ZONESPAN>::IsAcceptableHit ( const ExtHit_t * pHit ) const
-{
-	assert ( m_pZoneChecker );
-	int * pZones = ( m_bFinal ? m_dFinalZones.GetZVec ( m_iMyHit ) : m_dMyZones.GetZVec ( m_iMyHit ) );
-
-	bool bRes = false;
-	// only check zones that actually match this document
-	ARRAY_FOREACH ( i, m_dZones )
-		bRes |= ( m_pZoneChecker->IsInZone ( m_dZones[i], pHit, pZones + i )==SPH_ZONE_FOUND );
-	return bRes;
-}
-
 template < TermPosFilter_e T, class ExtBase >
-const ExtDoc_t * ExtConditional<T,ExtBase>::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtConditional<T,ExtBase>::GetDocsChunk()
 {
 	SphDocID_t uSkipID = m_uLastID;
 	// fetch more docs if needed
 	if ( !m_pRawDocs )
 	{
-		m_pRawDocs = ExtBase::GetDocsChunk ( &m_uTermMaxID );
+		m_pRawDocs = ExtBase::GetDocsChunk();
 		if ( !m_pRawDocs )
 			return NULL;
 
@@ -2472,7 +2357,6 @@ const ExtDoc_t * ExtConditional<T,ExtBase>::GetDocsChunk ( SphDocID_t * pMaxID )
 	// filter the hits, and build the documents list
 	int iMyDoc = 0;
 	int iMyHit = 0;
-	TermAcceptor_c<T>::SetMyHit(0);
 
 	const ExtDoc_t * pDoc = m_pRawDoc; // just a shortcut
 	const ExtHit_t * pHit = m_pRawHit;
@@ -2483,13 +2367,13 @@ const ExtDoc_t * ExtConditional<T,ExtBase>::GetDocsChunk ( SphDocID_t * pMaxID )
 	{
 		// try to fetch more hits for current raw docs block if we're out
 		if ( !pHit || pHit->m_uDocid==DOCID_MAX )
-			pHit = ExtBase::GetHitsChunk ( m_pRawDocs, m_uTermMaxID );
+			pHit = ExtBase::GetHitsChunk ( m_pRawDocs );
 
 		// did we touch all the hits we had? if so, we're fully done with
 		// current raw docs block, and should start a new one
 		if ( !pHit )
 		{
-			m_pRawDocs = ExtBase::GetDocsChunk ( &m_uTermMaxID );
+			m_pRawDocs = ExtBase::GetDocsChunk();
 			if ( !m_pRawDocs ) // no more incoming documents? bail
 				break;
 
@@ -2522,14 +2406,12 @@ const ExtDoc_t * ExtConditional<T,ExtBase>::GetDocsChunk ( SphDocID_t * pMaxID )
 
 		// current hit is surely acceptable.
 		m_dMyHits[iMyHit++] = *(pHit++);
-		TermAcceptor_c<T>::SetMyHit ( iMyHit );
 		// copy acceptable hits for this document
 		while ( iMyHit<ExtBase::MAX_HITS-1 && pHit->m_uDocid==uLastID )
 		{
 			if ( t_Acceptor::IsAcceptableHit ( pHit ) )
 			{
 				m_dMyHits[iMyHit++] = *pHit;
-				TermAcceptor_c<T>::SetMyHit ( iMyHit );
 			}
 			pHit++;
 		}
@@ -2553,37 +2435,40 @@ const ExtDoc_t * ExtConditional<T,ExtBase>::GetDocsChunk ( SphDocID_t * pMaxID )
 	m_dMyHits[iMyHit].m_uDocid = DOCID_MAX;
 	m_eState = COPY_FILTERED;
 
-	ExtBase::m_uMaxID = iMyDoc ? m_dMyDocs[iMyDoc-1].m_uDocid : 0;
-	if ( pMaxID ) *pMaxID = ExtBase::m_uMaxID;
+	PrintDocsChunk ( iMyDoc, ExtBase::m_iAtomPos, m_dMyDocs, "cond", this );
 
 	return iMyDoc ? m_dMyDocs : NULL;
 }
 
 
 template < TermPosFilter_e T, class ExtBase >
-const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
+	const ExtDoc_t * pStart = pDocs;
 	if ( m_eState==COPY_DONE )
 	{
 		// this request completed in full
-		if ( m_uDoneFor==pDocs->m_uDocid || !m_uDoneFor )
+		if ( m_uDoneFor==pDocs->m_uDocid || !m_uDoneFor || m_uHitStartDocid==pDocs->m_uDocid )
 			return NULL;
 
 		// old request completed in full, but we have a new hits subchunk request now
 		// even though there were no new docs requests in the meantime!
 		m_eState = COPY_FILTERED;
+		if ( m_uDoneFor && m_uDoneFor!=DOCID_MAX )
+		{
+			while ( pDocs->m_uDocid!=DOCID_MAX && pDocs->m_uDocid<=m_uDoneFor )
+				pDocs++;
+		}
 	}
 	m_uDoneFor = pDocs->m_uDocid;
 
 	// regular case
 	// copy hits for requested docs from my hits to filtered hits, and return those
 	int iFilteredHits = 0;
-	TermAcceptor_c<T>::SetMyHit ( 0, true );
 
 	if ( m_eState==COPY_FILTERED )
 	{
-		const ExtHit_t * pMyHits = m_dMyHits;
-		const ExtHit_t * pMyHit = pMyHits;
+		const ExtHit_t * pMyHit = m_dMyHits;
 		for ( ;; )
 		{
 			// skip hits that the caller is not interested in
@@ -2612,7 +2497,6 @@ const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDoc
 			// copy matching hits
 			while ( iFilteredHits<ExtBase::MAX_HITS-1 && pDocs->m_uDocid==pMyHit->m_uDocid )
 			{
-				TermAcceptor_c<T>::CopyMyHit ( pMyHit - pMyHits, iFilteredHits );
 				m_dFilteredHits[iFilteredHits++] = *pMyHit++;
 			}
 
@@ -2627,7 +2511,7 @@ const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDoc
 	{
 		// where do we stand?
 		if ( !m_pRawHit || m_pRawHit->m_uDocid==DOCID_MAX )
-			m_pRawHit = ExtBase::GetHitsChunk ( m_pRawDocs, Min ( uMaxID, m_uTermMaxID ) );
+			m_pRawHit = ExtBase::GetHitsChunk ( m_pRawDocs );
 
 		// no more hits for current chunk
 		if ( !m_pRawHit )
@@ -2637,13 +2521,11 @@ const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDoc
 		}
 
 		// copy while we can
-		TermAcceptor_c<T>::SetMyHit ( iFilteredHits, true );
 		while ( m_pRawHit->m_uDocid==m_uLastID && iFilteredHits<ExtBase::MAX_HITS-1 )
 		{
 			if ( t_Acceptor::IsAcceptableHit ( m_pRawHit ) )
 			{
 				m_dFilteredHits[iFilteredHits++] = *m_pRawHit;
-				TermAcceptor_c<T>::SetMyHit ( iFilteredHits, true );
 			}
 			m_pRawHit++;
 		}
@@ -2655,6 +2537,16 @@ const ExtHit_t * ExtConditional<T,ExtBase>::GetHitsChunk ( const ExtDoc_t * pDoc
 		// in any case, this chunk is over
 		break;
 	}
+
+	m_uDoneFor = pDocs->m_uDocid;
+	m_uHitStartDocid = 0;
+	if ( m_uDoneFor==DOCID_MAX && pDocs-1>=pStart )
+	{
+		m_uDoneFor = ( pDocs-1 )->m_uDocid;
+		m_uHitStartDocid = pStart->m_uDocid;
+	}
+
+	PrintHitsChunk ( iFilteredHits, ExtBase::m_iAtomPos, m_dFilteredHits, "cond", this );
 
 	m_dFilteredHits[iFilteredHits].m_uDocid = DOCID_MAX;
 	return iFilteredHits ? m_dFilteredHits : NULL;
@@ -2677,7 +2569,6 @@ inline void	ExtTwofer_c::Init ( ExtNode_i * pFirst, ExtNode_i * pSecond, const I
 	m_pCurDoc[1] = NULL;
 	m_dNodePos[0] = 0;
 	m_dNodePos[1] = 0;
-	m_bPosAware = false;
 	m_uMatchedDocid = 0;
 	m_iAtomPos = ( pFirst && pFirst->m_iAtomPos ) ? pFirst->m_iAtomPos : 0;
 	if ( pSecond && pSecond->m_iAtomPos && pSecond->m_iAtomPos<m_iAtomPos && m_iAtomPos!=0 )
@@ -2715,17 +2606,16 @@ void ExtTwofer_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 	m_pChildren[1]->SetQwordsIDF ( hQwords );
 }
 
-void ExtTwofer_c::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtTwofer_c::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
-	m_pChildren[0]->GetTermDupes ( hQwords, dTermDupes );
-	m_pChildren[1]->GetTermDupes ( hQwords, dTermDupes );
+	m_pChildren[0]->GetTerms ( hQwords, dTermDupes );
+	m_pChildren[1]->GetTerms ( hQwords, dTermDupes );
 }
 
 //////////////////////////////////////////////////////////////////////////
 
-const ExtDoc_t * ExtAnd_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtAnd_c::GetDocsChunk()
 {
-	m_uMaxID = 0;
 	const ExtDoc_t * pCur0 = m_pCurDoc[0];
 	const ExtDoc_t * pCur1 = m_pCurDoc[1];
 
@@ -2744,13 +2634,13 @@ const ExtDoc_t * ExtAnd_c::GetDocsChunk ( SphDocID_t * pMaxID )
 			{
 				if ( pCur1 && pCur1->m_uDocid!=DOCID_MAX )
 					m_pChildren[0]->HintDocid ( pCur1->m_uDocid );
-				pCur0 = m_pChildren[0]->GetDocsChunk ( NULL );
+				pCur0 = m_pChildren[0]->GetDocsChunk();
 			}
 			if ( !pCur1 )
 			{
 				if ( pCur0 && pCur0->m_uDocid!=DOCID_MAX )
 					m_pChildren[1]->HintDocid ( pCur0->m_uDocid );
-				pCur1 = m_pChildren[1]->GetDocsChunk ( NULL );
+				pCur1 = m_pChildren[1]->GetDocsChunk();
 			}
 			if ( !pCur0 || !pCur1 )
 			{
@@ -2791,10 +2681,10 @@ const ExtDoc_t * ExtAnd_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	m_pCurDoc[0] = pCur0;
 	m_pCurDoc[1] = pCur1;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "and" );
+	return ReturnDocsChunk ( iDoc, "and" );
 }
 
-const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	const ExtHit_t * pCur0 = m_pCurHit[0];
 	const ExtHit_t * pCur1 = m_pCurHit[1];
@@ -2869,8 +2759,8 @@ const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMa
 				m_uMatchedDocid = 0;
 
 		// warmup if needed
-		if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX ) pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs, uMaxID );
-		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX ) pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs, uMaxID );
+		if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX ) pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs );
+		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX ) pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs );
 
 		// one of the hitlists is over
 		if ( !pCur0 || !pCur1 )
@@ -2880,9 +2770,9 @@ const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMa
 				continue;
 
 			if ( pCur0 )
-				while ( ( pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs, uMaxID ) )!=NULL );
+				while ( ( pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs ) )!=NULL );
 			if ( pCur1 )
-				while ( ( pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs, uMaxID ) )!=NULL );
+				while ( ( pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs ) )!=NULL );
 
 			if ( !pCur0 && !pCur1 )
 				break; // both are over, we're done
@@ -2912,21 +2802,22 @@ const ExtHit_t * ExtAnd_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMa
 
 //////////////////////////////////////////////////////////////////////////
 
-bool ExtAndZonespanned::IsSameZonespan ( int iLeft, int iRight ) const
+bool ExtAndZonespanned_c::IsSameZonespan ( const ExtHit_t * pHit1, const ExtHit_t * pHit2 ) const
 {
-	assert ( m_dChildzones[0] );
-	assert ( m_dChildzones[1] );
-	assert ( m_pSpans );
-
-	int * pLeft = m_dChildzones[0]->GetZVec(iLeft);
-	int * pRight = m_dChildzones[1]->GetZVec(iRight);
-	for ( int i = 0; i<m_pSpans->m_iNumZones; ++i )
-		if ( pLeft[i]>=0 && pLeft[i]==pRight[i] )
-			return true;
+	ARRAY_FOREACH ( i, m_dZones )
+	{
+		int iSpan1, iSpan2;
+		if ( m_pZoneChecker->IsInZone ( m_dZones[i], pHit1, &iSpan1 )==SPH_ZONE_FOUND && m_pZoneChecker->IsInZone ( m_dZones[i], pHit2, &iSpan2 )==SPH_ZONE_FOUND )
+		{
+			assert ( iSpan1>=0 && iSpan2>=0 );
+			if ( iSpan1==iSpan2 )
+				return true;
+		}
+	}
 	return false;
 }
 
-const ExtHit_t * ExtAndZonespanned::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtAndZonespanned_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	const ExtHit_t * pCur0 = m_pCurHit[0];
 	const ExtHit_t * pCur1 = m_pCurHit[1];
@@ -2951,24 +2842,24 @@ const ExtHit_t * ExtAndZonespanned::GetHitsChunk ( const ExtDoc_t * pDocs, SphDo
 					if ( ( pCur0->m_uHitpos < pCur1->m_uHitpos )
 						|| ( pCur0->m_uHitpos==pCur1->m_uHitpos && pCur0->m_uQuerypos>pCur1->m_uQuerypos ) )
 					{
-						if ( IsSameZonespan ( pCur0-m_pLastBaseHit[0], pCur1-m_pLastBaseHit[1] ) )
+						if ( IsSameZonespan ( pCur0, pCur1 ) )
 						{
 							m_dHits[iHit] = *pCur0;
 							if ( uNodePos0!=0 )
 								m_dHits[iHit].m_uNodepos = uNodePos0;
-							m_dChildzones[0]->CopyZVecTo ( pCur0-m_pLastBaseHit[0], m_pSpans->GetZVec ( iHit++ ) );
+							iHit++;
 						}
 						pCur0++;
 						if ( pCur0->m_uDocid!=m_uMatchedDocid )
 							break;
 					} else
 					{
-						if ( IsSameZonespan ( pCur0-m_pLastBaseHit[0], pCur1-m_pLastBaseHit[1] ) )
+						if ( IsSameZonespan ( pCur0, pCur1 ) )
 						{
 							m_dHits[iHit] = *pCur1;
 							if ( uNodePos1!=0 )
 								m_dHits[iHit].m_uNodepos = uNodePos1;
-							m_dChildzones[1]->CopyZVecTo ( pCur1-m_pLastBaseHit[1], m_pSpans->GetZVec ( iHit++ ) );
+							iHit++;
 						}
 						pCur1++;
 						if ( pCur1->m_uDocid!=m_uMatchedDocid )
@@ -3002,13 +2893,11 @@ const ExtHit_t * ExtAndZonespanned::GetHitsChunk ( const ExtDoc_t * pDocs, SphDo
 		// warmup if needed
 		if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX )
 		{
-			pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs, uMaxID );
-			m_pLastBaseHit[0] = pCur0;
+			pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs );
 		}
 		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX )
 		{
-			pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs, uMaxID );
-			m_pLastBaseHit[1] = pCur1;
+			pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs );
 		}
 
 		// one of the hitlists is over
@@ -3039,16 +2928,13 @@ const ExtHit_t * ExtAndZonespanned::GetHitsChunk ( const ExtDoc_t * pDocs, SphDo
 	m_pCurHit[0] = pCur0;
 	m_pCurHit[1] = pCur1;
 
-	assert ( iHit>=0 && iHit<MAX_HITS );
-	m_dHits[iHit].m_uDocid = DOCID_MAX;
-	return iHit ? m_dHits : NULL;
+	return ReturnHitsChunk ( iHit, "and-zonespan" );
 }
 
 //////////////////////////////////////////////////////////////////////////
 
-const ExtDoc_t * ExtOr_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtOr_c::GetDocsChunk()
 {
-	m_uMaxID = 0;
 	const ExtDoc_t * pCur0 = m_pCurDoc[0];
 	const ExtDoc_t * pCur1 = m_pCurDoc[1];
 
@@ -3061,12 +2947,12 @@ const ExtDoc_t * ExtOr_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX )
 		{
 			if ( uTouched & 1 ) break; // it was touched, so we can't advance, because child hitlist offsets would be lost
-			pCur0 = m_pChildren[0]->GetDocsChunk ( NULL );
+			pCur0 = m_pChildren[0]->GetDocsChunk();
 		}
 		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX )
 		{
 			if ( uTouched & 2 ) break; // it was touched, so we can't advance, because child hitlist offsets would be lost
-			pCur1 = m_pChildren[1]->GetDocsChunk ( NULL );
+			pCur1 = m_pChildren[1]->GetDocsChunk();
 		}
 
 		// check if we're over
@@ -3134,10 +3020,10 @@ const ExtDoc_t * ExtOr_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	m_pCurDoc[0] = pCur0;
 	m_pCurDoc[1] = pCur1;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "or" );
+	return ReturnDocsChunk ( iDoc, "or" );
 }
 
-const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	const ExtHit_t * pCur0 = m_pCurHit[0];
 	const ExtHit_t * pCur1 = m_pCurHit[1];
@@ -3154,7 +3040,8 @@ const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMax
 			if ( pCur0 && pCur1 && pCur0->m_uDocid==m_uMatchedDocid && pCur1->m_uDocid==m_uMatchedDocid )
 				while ( iHit<MAX_HITS-1 )
 			{
-				if ( pCur0->m_uHitpos < pCur1->m_uHitpos )
+				if ( ( pCur0->m_uHitpos<pCur1->m_uHitpos ) ||
+					( pCur0->m_uHitpos==pCur1->m_uHitpos && pCur0->m_uQuerypos<=pCur1->m_uQuerypos ) )
 				{
 					m_dHits[iHit++] = *pCur0++;
 					if ( pCur0->m_uDocid!=m_uMatchedDocid )
@@ -3174,13 +3061,13 @@ const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMax
 			// example, word A, pos 1, 2, 3, hit chunk ends, 4, 5, 6, word B, pos 7, 8, 9
 			if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX )
 			{
-				pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs, uMaxID );
+				pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs );
 				if ( pCur0 && pCur0->m_uDocid==m_uMatchedDocid )
 					continue;
 			}
 			if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX )
 			{
-				pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs, uMaxID );
+				pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs );
 				if ( pCur1 && pCur1->m_uDocid==m_uMatchedDocid )
 					continue;
 			}
@@ -3203,8 +3090,8 @@ const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMax
 			m_uMatchedDocid = 0;
 
 		// warmup if needed
-		if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX ) pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs, uMaxID );
-		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX ) pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs, uMaxID );
+		if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX ) pCur0 = m_pChildren[0]->GetHitsChunk ( pDocs );
+		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX ) pCur1 = m_pChildren[1]->GetHitsChunk ( pDocs );
 		if ( !pCur0 && !pCur1 )
 			break;
 
@@ -3216,9 +3103,7 @@ const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMax
 	m_pCurHit[0] = pCur0;
 	m_pCurHit[1] = pCur1;
 
-	assert ( iHit>=0 && iHit<MAX_HITS );
-	m_dHits[iHit].m_uDocid = DOCID_MAX;
-	return ( iHit!=0 ) ? m_dHits : NULL;
+	return ReturnHitsChunk ( iHit, "or" );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3229,16 +3114,15 @@ const ExtHit_t * ExtOr_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMax
 // same docID as in lhs
 //
 // we do this to return hits from rhs too which we need to affect match rank
-const ExtDoc_t * ExtMaybe_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtMaybe_c::GetDocsChunk()
 {
-	m_uMaxID = 0;
 	const ExtDoc_t * pCur0 = m_pCurDoc[0];
 	const ExtDoc_t * pCur1 = m_pCurDoc[1];
 	int iDoc = 0;
 
 	// try to get next doc from lhs
 	if ( !pCur0 || pCur0->m_uDocid==DOCID_MAX )
-		pCur0 = m_pChildren[0]->GetDocsChunk ( pMaxID );
+		pCur0 = m_pChildren[0]->GetDocsChunk();
 
 	// we have nothing to do if there is no doc from lhs
 	if ( pCur0 )
@@ -3247,7 +3131,7 @@ const ExtDoc_t * ExtMaybe_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		do
 		{
 			if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX )
-				pCur1 = m_pChildren[1]->GetDocsChunk ( pMaxID );
+				pCur1 = m_pChildren[1]->GetDocsChunk();
 			else if ( pCur1->m_uDocid<pCur0->m_uDocid )
 				++pCur1;
 		} while ( pCur1 && pCur1->m_uDocid<pCur0->m_uDocid );
@@ -3266,7 +3150,7 @@ const ExtDoc_t * ExtMaybe_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	m_pCurDoc[0] = pCur0;
 	m_pCurDoc[1] = pCur1;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "maybe" );
+	return ReturnDocsChunk ( iDoc, "maybe" );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3277,14 +3161,13 @@ ExtAndNot_c::ExtAndNot_c ( ExtNode_i * pFirst, ExtNode_i * pSecond, const ISphQw
 {
 }
 
-const ExtDoc_t * ExtAndNot_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtAndNot_c::GetDocsChunk()
 {
 	// if reject-list is over, simply pass through to accept-list
 	if ( m_bPassthrough )
-		return m_pChildren[0]->GetDocsChunk ( pMaxID );
+		return m_pChildren[0]->GetDocsChunk();
 
 	// otherwise, do some removals
-	m_uMaxID = 0;
 	const ExtDoc_t * pCur0 = m_pCurDoc[0];
 	const ExtDoc_t * pCur1 = m_pCurDoc[1];
 
@@ -3300,14 +3183,14 @@ const ExtDoc_t * ExtAndNot_c::GetDocsChunk ( SphDocID_t * pMaxID )
 				break;
 
 			// no matches so far; go pull
-			pCur0 = m_pChildren[0]->GetDocsChunk ( NULL );
+			pCur0 = m_pChildren[0]->GetDocsChunk();
 			if ( !pCur0 )
 				break;
 		}
 
 		// pull more docs from reject, if nedeed
 		if ( !pCur1 || pCur1->m_uDocid==DOCID_MAX )
-			pCur1 = m_pChildren[1]->GetDocsChunk ( NULL );
+			pCur1 = m_pChildren[1]->GetDocsChunk();
 
 		// if there's nothing to filter against, simply copy leftovers
 		if ( !pCur1 )
@@ -3353,12 +3236,12 @@ const ExtDoc_t * ExtAndNot_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	m_pCurDoc[0] = pCur0;
 	m_pCurDoc[1] = pCur1;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "andnot" );
+	return ReturnDocsChunk ( iDoc, "andnot" );
 }
 
-const ExtHit_t * ExtAndNot_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtAndNot_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
-	return m_pChildren[0]->GetHitsChunk ( pDocs, uMaxID );
+	return m_pChildren[0]->GetHitsChunk ( pDocs );
 }
 
 void ExtAndNot_c::Reset ( const ISphQwordSetup & tSetup )
@@ -3419,10 +3302,10 @@ void ExtNWayT::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 	m_pNode->SetQwordsIDF ( hQwords );
 }
 
-void ExtNWayT::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtNWayT::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
 	assert ( m_pNode );
-	m_pNode->GetTermDupes ( hQwords, dTermDupes );
+	m_pNode->GetTerms ( hQwords, dTermDupes );
 }
 
 uint64_t ExtNWayT::GetWordID() const
@@ -3432,14 +3315,12 @@ uint64_t ExtNWayT::GetWordID() const
 }
 
 template < class FSM >
-const ExtDoc_t * ExtNWay_c<FSM>::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtNWay_c<FSM>::GetDocsChunk()
 {
-	m_uMaxID = 0;
-
 	// initial warmup
 	if ( !m_pDoc )
 	{
-		if ( !m_pDocs ) m_pDocs = m_pNode->GetDocsChunk ( &m_uDocsMaxID );
+		if ( !m_pDocs ) m_pDocs = m_pNode->GetDocsChunk();
 		if ( !m_pDocs ) return NULL; // no more docs
 		m_pDoc = m_pDocs;
 	}
@@ -3455,7 +3336,7 @@ const ExtDoc_t * ExtNWay_c<FSM>::GetDocsChunk ( SphDocID_t * pMaxID )
 	{
 		if ( !pHit || pHit->m_uDocid==DOCID_MAX )
 		{
-			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs, m_uDocsMaxID );
+			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs );
 			if ( !pHit )
 				break;
 		}
@@ -3477,17 +3358,17 @@ const ExtDoc_t * ExtNWay_c<FSM>::GetDocsChunk ( SphDocID_t * pMaxID )
 		if ( !pHit || pHit->m_uDocid==DOCID_MAX )
 		{
 			// grab more hits
-			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs, m_uDocsMaxID );
+			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs );
 			if ( m_pHits ) continue;
 
 			m_uMatchedDocid = 0;
 
 			// no more hits for current docs chunk; grab more docs
-			pDoc = m_pDocs = m_pNode->GetDocsChunk ( &m_uDocsMaxID );
+			pDoc = m_pDocs = m_pNode->GetDocsChunk();
 			if ( !m_pDocs ) break;
 
 			// we got docs, there must be hits
-			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs, m_uDocsMaxID );
+			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs );
 			assert ( pHit );
 			continue;
 		}
@@ -3536,25 +3417,23 @@ const ExtDoc_t * ExtNWay_c<FSM>::GetDocsChunk ( SphDocID_t * pMaxID )
 	m_dMyHits[iHit].m_uDocid = DOCID_MAX; // end marker
 	m_uMatchedDocid = 0;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "nway" );
+	return ReturnDocsChunk ( iDoc, "nway" );
 }
 
 template < class FSM >
-const ExtHit_t * ExtNWay_c<FSM>::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtNWay_c<FSM>::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	// if we already emitted hits for this matches block, do not do that again
 	SphDocID_t uFirstMatch = pDocs->m_uDocid;
 	if ( uFirstMatch==m_uHitsOverFor )
 		return NULL;
 
-	// early reject whole block
-	if ( pDocs->m_uDocid > m_uMaxID ) return NULL;
-	if ( m_uMaxID && m_dDocs[0].m_uDocid > uMaxID ) return NULL;
-
 	// shortcuts
 	const ExtDoc_t * pMyDoc = m_pMyDoc;
 	const ExtHit_t * pMyHit = m_pMyHit;
-	assert ( pMyDoc );
+
+	if ( !pMyDoc )
+		return NULL;
 	assert ( pMyHit );
 
 	// filter and copy hits from m_dMyHits
@@ -3650,7 +3529,7 @@ bool ExtNWay_c<FSM>::EmitTail ( int & iHit )
 		// and-node hits chunk end reached? get some more
 		if ( pHit->m_uDocid==DOCID_MAX )
 		{
-			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs, m_uDocsMaxID );
+			pHit = m_pHits = m_pNode->GetHitsChunk ( m_pDocs );
 			if ( !pHit )
 			{
 				m_uMatchedDocid = 0;
@@ -3714,7 +3593,7 @@ FSMphrase::FSMphrase ( const CSphVector<ExtNode_i *> & dQwords, const XQNode_t &
 		m_uQposMask = GetQposMask ( dQwords );
 }
 
-inline bool FSMphrase::HitFSM ( const ExtHit_t* pHit, ExtHit_t* dTarget )
+inline bool FSMphrase::HitFSM ( const ExtHit_t * pHit, ExtHit_t * pTarget )
 {
 	DWORD uHitposWithField = HITMAN::GetPosWithField ( pHit->m_uHitpos );
 
@@ -3748,12 +3627,12 @@ inline bool FSMphrase::HitFSM ( const ExtHit_t* pHit, ExtHit_t* dTarget )
 			DWORD uSpanlen = m_dAtomPos.Last() - m_dAtomPos[0];
 
 			// emit directly into m_dHits, this is no need to disturb m_dMyHits here.
-			dTarget->m_uDocid = pHit->m_uDocid;
-			dTarget->m_uHitpos = uHitposWithField - uSpanlen;
-			dTarget->m_uQuerypos = (WORD) m_dAtomPos[0];
-			dTarget->m_uMatchlen = dTarget->m_uSpanlen = (WORD)( uSpanlen + 1 );
-			dTarget->m_uWeight = m_dAtomPos.GetLength();
-			dTarget->m_uQposMask = m_uQposMask;
+			pTarget->m_uDocid = pHit->m_uDocid;
+			pTarget->m_uHitpos = uHitposWithField - uSpanlen;
+			pTarget->m_uQuerypos = (WORD) m_dAtomPos[0];
+			pTarget->m_uMatchlen = pTarget->m_uSpanlen = (WORD)( uSpanlen + 1 );
+			pTarget->m_uWeight = m_dAtomPos.GetLength();
+			pTarget->m_uQposMask = m_uQposMask;
 			ResetFSM ();
 			return true;
 		}
@@ -3780,7 +3659,7 @@ FSMproximity::FSMproximity ( const CSphVector<ExtNode_i *> & dQwords, const XQNo
 		m_uQposMask = GetQposMask ( dQwords );
 }
 
-inline bool FSMproximity::HitFSM ( const ExtHit_t* pHit, ExtHit_t* dTarget )
+inline bool FSMproximity::HitFSM ( const ExtHit_t* pHit, ExtHit_t* pTarget )
 {
 	// walk through the hitlist and update context
 	int iQindex = pHit->m_uQuerypos - m_uMinQpos;
@@ -3829,30 +3708,41 @@ inline bool FSMproximity::HitFSM ( const ExtHit_t* pHit, ExtHit_t* dTarget )
 	// m_iMaxDistance - ( pHit->m_uHitpos - m_dProx[m_iMinQindex] - m_uQLen )
 	DWORD uMax = 0;
 	ARRAY_FOREACH ( i, m_dProx )
-	{
-		m_dDeltas[i] = m_dProx[i] - i;
-		uMax = Max ( uMax, m_dProx[i] );
-	}
-	m_dDeltas.Sort ();
+		if ( m_dProx[i]!=UINT_MAX )
+		{
+			m_dDeltas[i] = m_dProx[i] - i;
+			uMax = Max ( uMax, m_dProx[i] );
+		} else
+			m_dDeltas[i] = INT_MAX;
 
-	DWORD uWeight = 0;
-	int iLast = -INT_MAX;
-	ARRAY_FOREACH ( i, m_dDeltas )
-	{
-		if ( m_dDeltas[i]==iLast )
-			uWeight++;
-		else
+		m_dDeltas.Sort ();
+
+		DWORD uCurWeight = 0;
+		DWORD uWeight = 0;
+		int iLast = -INT_MAX;
+		ARRAY_FOREACH_COND ( i, m_dDeltas, m_dDeltas[i]!=INT_MAX )
+		{
+			if ( m_dDeltas[i]==iLast )
+				uCurWeight++;
+			else
+			{
+				uWeight += uCurWeight ? ( 1+uCurWeight ) : 0;
+				uCurWeight = 0;
+			}
+			iLast = m_dDeltas[i];
+		}
+
+		uWeight += uCurWeight ? ( 1+uCurWeight ) : 0;
+		if ( !uWeight )
 			uWeight = 1;
-		iLast = m_dDeltas[i];
-	}
 
 	// emit hit
-	dTarget->m_uDocid = pHit->m_uDocid;
-	dTarget->m_uHitpos = Hitpos_t ( m_dProx[m_iMinQindex] ); // !COMMIT strictly speaking this is creation from LCS not value
-	dTarget->m_uQuerypos = (WORD) m_uMinQpos;
-	dTarget->m_uSpanlen = dTarget->m_uMatchlen = (WORD)( uMax-m_dProx[m_iMinQindex]+1 );
-	dTarget->m_uWeight = uWeight;
-	dTarget->m_uQposMask = m_uQposMask;
+	pTarget->m_uDocid = pHit->m_uDocid;
+	pTarget->m_uHitpos = Hitpos_t ( m_dProx[m_iMinQindex] ); // !COMMIT strictly speaking this is creation from LCS not value
+	pTarget->m_uQuerypos = (WORD) m_uMinQpos;
+	pTarget->m_uSpanlen = pTarget->m_uMatchlen = (WORD)( uMax-m_dProx[m_iMinQindex]+1 );
+	pTarget->m_uWeight = uWeight;
+	pTarget->m_uQposMask = m_uQposMask;
 
 	// remove current min, and force recompue
 	m_dProx[m_iMinQindex] = UINT_MAX;
@@ -4189,10 +4079,10 @@ void ExtQuorum_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 		m_dChildren[i].m_pTerm->SetQwordsIDF ( hQwords );
 }
 
-void ExtQuorum_c::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtQuorum_c::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
 	ARRAY_FOREACH ( i, m_dChildren )
-		m_dChildren[i].m_pTerm->GetTermDupes ( hQwords, dTermDupes );
+		m_dChildren[i].m_pTerm->GetTerms ( hQwords, dTermDupes );
 }
 
 uint64_t ExtQuorum_c::GetWordID() const
@@ -4204,7 +4094,7 @@ uint64_t ExtQuorum_c::GetWordID() const
 	return uHash;
 }
 
-const ExtDoc_t * ExtQuorum_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtQuorum_c::GetDocsChunk()
 {
 	// warmup
 	ARRAY_FOREACH ( i, m_dChildren )
@@ -4214,7 +4104,7 @@ const ExtDoc_t * ExtQuorum_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		if ( tElem.m_pCurDoc && tElem.m_pCurDoc->m_uDocid!=DOCID_MAX )
 			continue;
 
-		tElem.m_pCurDoc = tElem.m_pTerm->GetDocsChunk ( pMaxID );
+		tElem.m_pCurDoc = tElem.m_pTerm->GetDocsChunk();
 		if ( tElem.m_pCurDoc )
 			continue;
 
@@ -4289,7 +4179,7 @@ const ExtDoc_t * ExtQuorum_c::GetDocsChunk ( SphDocID_t * pMaxID )
 				continue; // still should fast forward rest of children to pass current doc-id
 			}
 
-			tElem.m_pCurDoc = tElem.m_pTerm->GetDocsChunk ( NULL );
+			tElem.m_pCurDoc = tElem.m_pTerm->GetDocsChunk();
 			if ( tElem.m_pCurDoc )
 				continue;
 
@@ -4301,10 +4191,10 @@ const ExtDoc_t * ExtQuorum_c::GetDocsChunk ( SphDocID_t * pMaxID )
 			iQuorumLeft = CountQuorum ( false );
 	}
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "quorum" );
+	return ReturnDocsChunk ( iDoc, "quorum" );
 }
 
-const ExtHit_t * ExtQuorum_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtQuorum_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	// dupe tail hits
 	if ( m_bHasDupes && m_uMatchedDocid )
@@ -4312,9 +4202,9 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t 
 
 	// quorum-buffer path
 	if ( m_bHasDupes )
-		return GetHitsChunkDupes ( pDocs, uMaxID );
+		return GetHitsChunkDupes ( pDocs );
 
-	return GetHitsChunkSimple ( pDocs, uMaxID );
+	return GetHitsChunkSimple ( pDocs );
 }
 
 const ExtHit_t * ExtQuorum_c::GetHitsChunkDupesTail ()
@@ -4347,7 +4237,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkDupesTail ()
 		m_dHits[iHit++] = *m_dChildren[iMinChild].m_pCurHit;
 		m_dChildren[iMinChild].m_pCurHit++;
 		if ( m_dChildren[iMinChild].m_pCurHit->m_uDocid==DOCID_MAX )
-			m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( dTailDocs, m_uMatchedDocid );
+			m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( dTailDocs );
 	}
 
 	return ReturnHitsChunk ( iHit, "quorum-dupes-tail" );
@@ -4361,7 +4251,7 @@ struct QuorumCmpHitPos_fn
 	}
 };
 
-const ExtHit_t * ExtQuorum_c::GetHitsChunkDupes ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtQuorum_c::GetHitsChunkDupes ( const ExtDoc_t * pDocs )
 {
 	// quorum-buffer path
 	int iHit = 0;
@@ -4421,7 +4311,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkDupes ( const ExtDoc_t * pDocs, SphDoc
 				m_dHits[iHit++] = *m_dChildren[iMinChild].m_pCurHit;
 				m_dChildren[iMinChild].m_pCurHit++;
 				if ( m_dChildren[iMinChild].m_pCurHit->m_uDocid==DOCID_MAX )
-					m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( pDocs, uMaxID );
+					m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( pDocs );
 			}
 		}
 
@@ -4432,14 +4322,14 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkDupes ( const ExtDoc_t * pDocs, SphDoc
 	return ReturnHitsChunk ( iHit, "quorum-dupes" );
 }
 
-const ExtHit_t * ExtQuorum_c::GetHitsChunkSimple ( const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+const ExtHit_t * ExtQuorum_c::GetHitsChunkSimple ( const ExtDoc_t * pDocs )
 {
 	// warmup
 	ARRAY_FOREACH ( i, m_dChildren )
 	{
 		TermTuple_t & tElem = m_dChildren[i];
 		if ( !tElem.m_pCurHit || tElem.m_pCurHit->m_uDocid==DOCID_MAX )
-			tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( pDocs, uMaxID );
+			tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( pDocs );
 	}
 
 	// main loop
@@ -4503,7 +4393,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkSimple ( const ExtDoc_t * pDocs, SphDo
 					// rescan current child
 					if ( tElem.m_pCurHit->m_uDocid==DOCID_MAX )
 					{
-						tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( pDocs, uMaxID );
+						tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( pDocs );
 						i -= ( tElem.m_pCurHit ? 1 : 0 );
 					}
 				}
@@ -4523,7 +4413,7 @@ const ExtHit_t * ExtQuorum_c::GetHitsChunkSimple ( const ExtDoc_t * pDocs, SphDo
 		m_dHits[iHit++] = *m_dChildren[iMinChild].m_pCurHit;
 		m_dChildren[iMinChild].m_pCurHit++;
 		if ( m_dChildren[iMinChild].m_pCurHit->m_uDocid==DOCID_MAX )
-			m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( pDocs, uMaxID );
+			m_dChildren[iMinChild].m_pCurHit = m_dChildren[iMinChild].m_pTerm->GetHitsChunk ( pDocs );
 	}
 
 	return ReturnHitsChunk ( iHit, "quorum-simple" );
@@ -4547,7 +4437,7 @@ bool ExtQuorum_c::CollectMatchingHits ( SphDocID_t uDocid, int iThreshold )
 
 		// getting more hits
 		if ( !tElem.m_pCurHit || tElem.m_pCurHit->m_uDocid==DOCID_MAX )
-			tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( tElem.m_pCurDoc, uDocid );
+			tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( tElem.m_pCurDoc );
 
 		// that hit stream over for now
 		if ( !tElem.m_pCurHit || tElem.m_pCurHit->m_uDocid==DOCID_MAX )
@@ -4592,7 +4482,7 @@ bool ExtQuorum_c::CollectMatchingHits ( SphDocID_t uDocid, int iThreshold )
 
 		// getting more hits
 		if ( !tElem.m_pCurHit || tElem.m_pCurHit->m_uDocid==DOCID_MAX )
-			tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( tElem.m_pCurDoc, uDocid );
+			tElem.m_pCurHit = tElem.m_pTerm->GetHitsChunk ( tElem.m_pCurDoc );
 
 		// hit stream over for current term
 		if ( !tElem.m_pCurHit || tElem.m_pCurHit->m_uDocid==DOCID_MAX )
@@ -4628,7 +4518,6 @@ ExtOrder_c::ExtOrder_c ( const CSphVector<ExtNode_i *> & dChildren, const ISphQw
 	m_pDocs.Resize ( iChildren );
 	m_pHits.Resize ( iChildren );
 	m_pDocsChunk.Resize ( iChildren );
-	m_dMaxID.Resize ( iChildren );
 	m_dMyHits[0].m_uDocid = DOCID_MAX;
 
 	if ( dChildren.GetLength()>0 )
@@ -4688,7 +4577,7 @@ int ExtOrder_c::GetChildIdWithNextHit ( SphDocID_t uDocid )
 			if ( !m_pDocsChunk[i] )
 				return -1;
 
-			m_pHits[i] = m_dChildren[i]->GetHitsChunk ( m_pDocsChunk[i], m_dMaxID[i] );
+			m_pHits[i] = m_dChildren[i]->GetHitsChunk ( m_pDocsChunk[i] );
 			i--;
 			continue;
 		}
@@ -4808,7 +4697,7 @@ int ExtOrder_c::GetMatchingHits ( SphDocID_t uDocid, ExtHit_t * pHitbuf, int iLi
 }
 
 
-const ExtDoc_t * ExtOrder_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtOrder_c::GetDocsChunk()
 {
 	if ( m_bDone )
 		return NULL;
@@ -4816,7 +4705,7 @@ const ExtDoc_t * ExtOrder_c::GetDocsChunk ( SphDocID_t * pMaxID )
 	// warm up
 	ARRAY_FOREACH ( i, m_dChildren )
 	{
-		if ( !m_pDocs[i] ) m_pDocs[i] = m_pDocsChunk[i] = m_dChildren[i]->GetDocsChunk ( &m_dMaxID[i] );
+		if ( !m_pDocs[i] ) m_pDocs[i] = m_pDocsChunk[i] = m_dChildren[i]->GetDocsChunk();
 		if ( !m_pDocs[i] )
 		{
 			m_bDone = true;
@@ -4844,11 +4733,11 @@ const ExtDoc_t * ExtOrder_c::GetDocsChunk ( SphDocID_t * pMaxID )
 			// block end marker? pull next block and keep scanning
 			if ( m_pDocs[i]->m_uDocid==DOCID_MAX )
 			{
-				m_pDocs[i] = m_pDocsChunk[i] = m_dChildren[i]->GetDocsChunk ( &m_dMaxID[i] );
+				m_pDocs[i] = m_pDocsChunk[i] = m_dChildren[i]->GetDocsChunk();
 				if ( !m_pDocs[i] )
 				{
 					m_bDone = true;
-					return ReturnDocsChunk ( iDoc, pMaxID, "order" );
+					return ReturnDocsChunk ( iDoc, "order" );
 				}
 				continue;
 			}
@@ -4878,7 +4767,7 @@ const ExtDoc_t * ExtOrder_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		ARRAY_FOREACH ( i, m_dChildren )
 		{
 			if ( !m_pHits[i] )
-				m_pHits[i] = m_dChildren[i]->GetHitsChunk ( m_pDocsChunk[i], m_dMaxID[i] );
+				m_pHits[i] = m_dChildren[i]->GetHitsChunk ( m_pDocsChunk[i] );
 
 			// every document comes with at least one hit
 			// and we did not yet process current candidate's hits
@@ -4898,7 +4787,7 @@ const ExtDoc_t * ExtOrder_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		m_pDocs[0]++;
 		if ( m_pDocs[0]->m_uDocid==DOCID_MAX )
 		{
-			m_pDocs[0] = m_pDocsChunk[0] = m_dChildren[0]->GetDocsChunk ( &m_dMaxID[0] );
+			m_pDocs[0] = m_pDocsChunk[0] = m_dChildren[0]->GetDocsChunk();
 			if ( !m_pDocs[0] )
 			{
 				m_bDone = true;
@@ -4907,11 +4796,11 @@ const ExtDoc_t * ExtOrder_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		}
 	}
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "order" );
+	return ReturnDocsChunk ( iDoc, "order" );
 }
 
 
-const ExtHit_t * ExtOrder_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t )
+const ExtHit_t * ExtOrder_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	if ( pDocs->m_uDocid==m_uHitsOverFor )
 		return NULL;
@@ -4993,10 +4882,10 @@ void ExtOrder_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 		m_dChildren[i]->SetQwordsIDF ( hQwords );
 }
 
-void ExtOrder_c::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtOrder_c::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
 	ARRAY_FOREACH ( i, m_dChildren )
-		m_dChildren[i]->GetTermDupes ( hQwords, dTermDupes );
+		m_dChildren[i]->GetTerms ( hQwords, dTermDupes );
 }
 
 uint64_t ExtOrder_c::GetWordID () const
@@ -5082,10 +4971,10 @@ void ExtUnit_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 	m_pArg2->SetQwordsIDF ( hQwords );
 }
 
-void ExtUnit_c::GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+void ExtUnit_c::GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 {
-	m_pArg1->GetTermDupes ( hQwords, dTermDupes );
-	m_pArg2->GetTermDupes ( hQwords, dTermDupes );
+	m_pArg1->GetTerms ( hQwords, dTermDupes );
+	m_pArg2->GetTerms ( hQwords, dTermDupes );
 }
 
 uint64_t ExtUnit_c::GetWordID() const
@@ -5103,7 +4992,7 @@ static inline void SkipHitsLtDocid ( const ExtHit_t * (*ppHits), SphDocID_t uMat
 		const ExtHit_t * pHit = *ppHits;
 		if ( !pHit || pHit->m_uDocid==DOCID_MAX )
 		{
-			pHit = *ppHits = pNode->GetHitsChunk ( pDocs, DOCID_MAX ); // OPTIMIZE? use that max?
+			pHit = *ppHits = pNode->GetHitsChunk ( pDocs ); // OPTIMIZE? use that max?
 			if ( !pHit )
 				return;
 		}
@@ -5129,7 +5018,7 @@ static inline bool SkipHitsLtePos ( const ExtHit_t * (*ppHits), Hitpos_t uPos, E
 		const ExtHit_t * pHit = *ppHits;
 		if ( !pHit || pHit->m_uDocid==DOCID_MAX )
 		{
-			pHit = *ppHits = pNode->GetHitsChunk ( pDocs, DOCID_MAX ); // OPTIMIZE? use that max?
+			pHit = *ppHits = pNode->GetHitsChunk ( pDocs ); // OPTIMIZE? use that max?
 			if ( !pHit )
 				return false;
 		}
@@ -5181,13 +5070,13 @@ int ExtUnit_c::FilterHits ( int iMyHit, DWORD uSentenceEnd, SphDocID_t uDocid, i
 			{
 				m_dMyHits[iMyHit++] = *m_pHit1++;
 				if ( m_pHit1->m_uDocid==DOCID_MAX )
-					m_pHit1 = m_pArg1->GetHitsChunk ( m_pDocs1, DOCID_MAX );
+					m_pHit1 = m_pArg1->GetHitsChunk ( m_pDocs1 );
 
 			} else
 			{
 				m_dMyHits[iMyHit++] = *m_pHit2++;
 				if ( m_pHit2->m_uDocid==DOCID_MAX )
-					m_pHit2 = m_pArg2->GetHitsChunk ( m_pDocs2, DOCID_MAX );
+					m_pHit2 = m_pArg2->GetHitsChunk ( m_pDocs2 );
 			}
 
 		} else
@@ -5248,7 +5137,7 @@ void ExtUnit_c::SkipTailHits ()
 }
 
 
-const ExtDoc_t * ExtUnit_c::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtUnit_c::GetDocsChunk()
 {
 	// SENTENCE operator is essentially AND on steroids
 	// that also takes relative dot positions into account
@@ -5272,14 +5161,14 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		// fetch more candidate docs, if needed
 		if ( !m_pDoc1 || m_pDoc1->m_uDocid==DOCID_MAX )
 		{
-			m_pDoc1 = m_pDocs1 = m_pArg1->GetDocsChunk ( NULL );
+			m_pDoc1 = m_pDocs1 = m_pArg1->GetDocsChunk();
 			if ( !m_pDoc1 )
 				break; // node is over
 		}
 
 		if ( !m_pDoc2 || m_pDoc2->m_uDocid==DOCID_MAX )
 		{
-			m_pDoc2 = m_pDocs2 = m_pArg2->GetDocsChunk ( NULL );
+			m_pDoc2 = m_pDocs2 = m_pArg2->GetDocsChunk();
 			if ( !m_pDoc2 )
 				break; // node is over
 		}
@@ -5301,7 +5190,7 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		// yes, now fetch more dots docs, if needed
 		// note how NULL is accepted here, "A and B but no dots" case is valid!
 		if ( !m_pDotDoc || m_pDotDoc->m_uDocid==DOCID_MAX )
-			m_pDotDoc = m_pDotDocs = m_pDot->GetDocsChunk ( NULL );
+			m_pDotDoc = m_pDotDocs = m_pDot->GetDocsChunk();
 
 		// skip preceding docs
 		while ( m_pDotDoc && m_pDotDoc->m_uDocid < uDocid )
@@ -5310,7 +5199,7 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk ( SphDocID_t * pMaxID )
 				m_pDotDoc++;
 
 			if ( m_pDotDoc->m_uDocid==DOCID_MAX )
-				m_pDotDoc = m_pDotDocs = m_pDot->GetDocsChunk ( NULL );
+				m_pDotDoc = m_pDotDocs = m_pDot->GetDocsChunk();
 		}
 
 		// we will need document hits on both routes below
@@ -5348,7 +5237,7 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk ( SphDocID_t * pMaxID )
 				SkipTailHits(); // nope, both hit lists are definitely over
 			}
 
-			return ReturnDocsChunk ( iDoc, iMyHit, pMaxID );
+			return ReturnDocsChunk ( iDoc, iMyHit );
 		}
 
 		// all hits copied; do the next candidate
@@ -5356,11 +5245,11 @@ const ExtDoc_t * ExtUnit_c::GetDocsChunk ( SphDocID_t * pMaxID )
 		m_pDoc2++;
 	}
 
-	return ReturnDocsChunk ( iDoc, iMyHit, pMaxID );
+	return ReturnDocsChunk ( iDoc, iMyHit );
 }
 
 
-const ExtHit_t * ExtUnit_c::GetHitsChunk ( const ExtDoc_t * pDocs, SphDocID_t )
+const ExtHit_t * ExtUnit_c::GetHitsChunk ( const ExtDoc_t * pDocs )
 {
 	SphDocID_t uFirstMatch = pDocs->m_uDocid;
 
@@ -5546,6 +5435,7 @@ static void Explain ( const XQNode_t * pNode, const CSphSchema & tSchema, const 
 
 
 ExtRanker_c::ExtRanker_c ( const XQQuery_t & tXQ, const ISphQwordSetup & tSetup )
+	: m_dZoneInfo ( 0 )
 {
 	assert ( tSetup.m_pCtx );
 
@@ -5581,7 +5471,6 @@ ExtRanker_c::ExtRanker_c ( const XQQuery_t & tXQ, const ISphQwordSetup & tSetup 
 
 	m_pDoclist = NULL;
 	m_pHitlist = NULL;
-	m_uMaxID = 0;
 	m_uPayloadMask = 0;
 	m_iQwords = 0;
 	m_pIndex = tSetup.m_pIndex;
@@ -5596,6 +5485,7 @@ ExtRanker_c::ExtRanker_c ( const XQQuery_t & tXQ, const ISphQwordSetup & tSetup 
 	m_dZoneMax.Fill ( 0 );
 	m_dZoneMin.Fill	( DOCID_MAX );
 	m_bZSlist = tXQ.m_bNeedSZlist;
+	m_dZoneInfo.Reset ( m_dZones.GetLength() );
 
 	CSphDict * pZonesDict = NULL;
 	// workaround for a particular case with following conditions
@@ -5627,6 +5517,15 @@ ExtRanker_c::~ExtRanker_c ()
 		SafeDelete ( m_dZoneStartTerm[i] );
 		SafeDelete ( m_dZoneEndTerm[i] );
 	}
+
+	ARRAY_FOREACH ( i, m_dZoneInfo )
+	{
+		ARRAY_FOREACH ( iDoc, m_dZoneInfo[i] )
+		{
+			SafeDelete ( m_dZoneInfo[i][iDoc].m_pHits );
+		}
+		m_dZoneInfo[i].Reset();
+	}
 }
 
 void ExtRanker_c::Reset ( const ISphQwordSetup & tSetup )
@@ -5644,14 +5543,19 @@ void ExtRanker_c::Reset ( const ISphQwordSetup & tSetup )
 
 	m_dZoneMax.Fill ( 0 );
 	m_dZoneMin.Fill ( DOCID_MAX );
-	m_hZoneInfo.Reset();
+	ARRAY_FOREACH ( i, m_dZoneInfo )
+	{
+		ARRAY_FOREACH ( iDoc, m_dZoneInfo[i] )
+			SafeDelete ( m_dZoneInfo[i][iDoc].m_pHits );
+		m_dZoneInfo[i].Reset();
+	}
 }
 
 
 const ExtDoc_t * ExtRanker_c::GetFilteredDocs ()
 {
 	#if QDEBUG
-	printf ( "\nqdebug: ranker getfiltereddocs\n" );
+	printf ( "ranker getfiltereddocs" );
 	#endif
 
 	ESphQueryState eState = SPH_QSTATE_TOTAL;
@@ -5660,10 +5564,9 @@ const ExtDoc_t * ExtRanker_c::GetFilteredDocs ()
 	for ( ;; )
 	{
 		// get another chunk
-		m_uMaxID = 0;
 		if ( pProfile )
 			eState = pProfile->Switch ( SPH_QSTATE_GET_DOCS );
-		const ExtDoc_t * pCand = m_pRoot->GetDocsChunk ( &m_uMaxID );
+		const ExtDoc_t * pCand = m_pRoot->GetDocsChunk();
 		if ( !pCand )
 		{
 			if ( pProfile )
@@ -5675,9 +5578,11 @@ const ExtDoc_t * ExtRanker_c::GetFilteredDocs ()
 		if ( pProfile )
 			pProfile->Switch ( SPH_QSTATE_FILTER );
 		int iDocs = 0;
+		SphDocID_t uMaxID = 0;
 		while ( pCand->m_uDocid!=DOCID_MAX )
 		{
 			m_tTestMatch.m_uDocID = pCand->m_uDocid;
+			m_tTestMatch.m_pStatic = NULL;
 			if ( pCand->m_pDocinfo )
 				memcpy ( m_tTestMatch.m_pDynamic, pCand->m_pDocinfo, m_iInlineRowitems*sizeof(CSphRowitem) );
 
@@ -5687,6 +5592,7 @@ const ExtDoc_t * ExtRanker_c::GetFilteredDocs ()
 				continue;
 			}
 
+			uMaxID = pCand->m_uDocid;
 			m_dMyDocs[iDocs] = *pCand;
 			m_tTestMatch.m_iWeight = (int)( (pCand->m_fTFIDF+0.5f)*SPH_BM25_SCALE ); // FIXME! bench bNeedBM25
 			Swap ( m_tTestMatch, m_dMyMatches[iDocs] );
@@ -5695,31 +5601,8 @@ const ExtDoc_t * ExtRanker_c::GetFilteredDocs ()
 		}
 
 		// clean up zone hash
-		if ( m_uMaxID!=DOCID_MAX )
-		{
-			ARRAY_FOREACH ( i, m_dZoneMin )
-			{
-				SphDocID_t uMinDocid = m_dZoneMin[i];
-				if ( uMinDocid==DOCID_MAX )
-					continue;
-
-				Verify ( m_hZoneInfo.IterateStart ( ZoneKey_t ( i, uMinDocid ) ) );
-				uMinDocid = DOCID_MAX;
-				do
-				{
-					ZoneKey_t tKey = m_hZoneInfo.IterateGetKey();
-					if ( tKey.m_iZone!=i || tKey.m_uDocid>m_uMaxID )
-					{
-						uMinDocid = ( tKey.m_iZone==i ) ? tKey.m_uDocid : DOCID_MAX;
-						break;
-					}
-
-					m_hZoneInfo.Delete ( tKey );
-				} while ( m_hZoneInfo.IterateNext() );
-
-				m_dZoneMin[i] = uMinDocid;
-			}
-		}
+		if ( !m_bZSlist )
+			CleanupZones ( uMaxID );
 
 		if ( iDocs )
 		{
@@ -5728,8 +5611,53 @@ const ExtDoc_t * ExtRanker_c::GetFilteredDocs ()
 			m_dMyDocs[iDocs].m_uDocid = DOCID_MAX;
 			if ( pProfile )
 				pProfile->Switch ( eState );
+
+			#if QDEBUG
+			CSphStringBuilder tRes;
+			tRes.Appendf ( "matched %p docs (%d) = [", this, iDocs );
+			for ( int i=0; i<iDocs; i++ )
+				tRes.Appendf ( i ? ", 0x%x" : "0x%x", DWORD ( m_dMyDocs[i].m_uDocid ) );
+			tRes.Appendf ( "]" );
+			printf ( "%s", tRes.cstr() );
+			#endif
+
 			return m_dMyDocs;
 		}
+	}
+}
+
+void ExtRanker_c::CleanupZones ( SphDocID_t uMaxDocid )
+{
+	if ( !uMaxDocid )
+		return;
+
+	ARRAY_FOREACH ( i, m_dZoneMin )
+	{
+		SphDocID_t uMinDocid = m_dZoneMin[i];
+		if ( uMinDocid==DOCID_MAX )
+			continue;
+
+		CSphVector<ZoneInfo_t> & dZone = m_dZoneInfo[i];
+		int iSpan = FindSpan ( dZone, uMaxDocid );
+		if ( iSpan==-1 )
+			continue;
+
+		if ( iSpan==dZone.GetLength()-1 )
+		{
+			ARRAY_FOREACH ( iDoc, dZone )
+				SafeDelete ( dZone[iDoc].m_pHits );
+			dZone.Resize ( 0 );
+			m_dZoneMin[i] = uMaxDocid;
+			continue;
+		}
+
+		for ( int iDoc=0; iDoc<=iSpan; iDoc++ )
+			SafeDelete ( dZone[iDoc].m_pHits );
+
+		int iLen = dZone.GetLength() - iSpan - 1;
+		memmove ( dZone.Begin(), dZone.Begin()+iSpan+1, sizeof(dZone[0]) * iLen );
+		dZone.Resize ( iLen );
+		m_dZoneMin[i] = dZone.Begin()->m_uDocid;
 	}
 }
 
@@ -5742,22 +5670,37 @@ void ExtRanker_c::SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
 }
 
 
-SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLastSpan )
+static SphZoneHit_e ZoneCacheFind ( const ZoneVVector_t & dZones, int iZone, const ExtHit_t * pHit, int * pLastSpan )
 {
-	// quick route, we have current docid cached
-	ZoneKey_t tKey ( iZone, pHit->m_uDocid ); // OPTIMIZE? allow 2-component hash keys maybe?
-	ZoneInfo_t * pZone = m_hZoneInfo ( tKey );
+	if ( !dZones[iZone].GetLength() )
+		return SPH_ZONE_NO_DOCUMENT;
+
+	ZoneInfo_t * pZone = sphBinarySearch ( dZones[iZone].Begin(), &dZones[iZone].Last(), bind ( &ZoneInfo_t::m_uDocid ), pHit->m_uDocid );
+	if ( !pZone )
+		return SPH_ZONE_NO_DOCUMENT;
+
 	if ( pZone )
 	{
 		// remove end markers that might mess up ordering
-		DWORD uPosWithField = HITMAN::GetPosWithField ( pHit->m_uHitpos );
-		int iSpan = FindSpan ( pZone->m_dStarts, uPosWithField );
-		if ( iSpan<0 || uPosWithField>pZone->m_dEnds[iSpan] )
+		Hitpos_t uPosWithField = HITMAN::GetPosWithField ( pHit->m_uHitpos );
+		int iSpan = FindSpan ( pZone->m_pHits->m_dStarts, uPosWithField );
+		if ( iSpan<0 || uPosWithField>pZone->m_pHits->m_dEnds[iSpan] )
 			return SPH_ZONE_NO_SPAN;
 		if ( pLastSpan )
 			*pLastSpan = iSpan;
 		return SPH_ZONE_FOUND;
 	}
+
+	return SPH_ZONE_NO_DOCUMENT;
+}
+
+
+SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLastSpan )
+{
+	// quick route, we have current docid cached
+	SphZoneHit_e eRes = ZoneCacheFind ( m_dZoneInfo, iZone, pHit, pLastSpan );
+	if ( eRes!=SPH_ZONE_NO_DOCUMENT )
+		return eRes;
 
 	// is there any zone info for this document at all?
 	if ( pHit->m_uDocid<=m_dZoneMax[iZone] )
@@ -5776,7 +5719,7 @@ SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLa
 		// get more docs if needed
 		if ( ( !pStart && m_dZoneMax[iZone]!=DOCID_MAX ) || pStart->m_uDocid==DOCID_MAX )
 		{
-			pStart = m_dZoneStartTerm[iZone]->GetDocsChunk ( NULL );
+			pStart = m_dZoneStartTerm[iZone]->GetDocsChunk();
 			if ( !pStart )
 			{
 				m_dZoneMax[iZone] = DOCID_MAX;
@@ -5786,7 +5729,7 @@ SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLa
 
 		if ( ( !pEnd && m_dZoneMax[iZone]!=DOCID_MAX ) || pEnd->m_uDocid==DOCID_MAX )
 		{
-			pEnd = m_dZoneEndTerm[iZone]->GetDocsChunk ( NULL );
+			pEnd = m_dZoneEndTerm[iZone]->GetDocsChunk();
 			if ( !pEnd )
 			{
 				m_dZoneMax[iZone] = DOCID_MAX;
@@ -5877,8 +5820,11 @@ SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLa
 		dCache[iCache].m_uDocid = DOCID_MAX;
 
 		// do caching
-		const ExtHit_t * pStartHits = m_dZoneStartTerm[iZone]->GetHitsChunk ( dCache, DOCID_MAX );
-		const ExtHit_t * pEndHits = m_dZoneEndTerm[iZone]->GetHitsChunk ( dCache, DOCID_MAX );
+		const ExtHit_t * pStartHits = m_dZoneStartTerm[iZone]->GetHitsChunk ( dCache );
+		const ExtHit_t * pEndHits = m_dZoneEndTerm[iZone]->GetHitsChunk ( dCache );
+		int iReserveStart = m_dZoneStartTerm[iZone]->GetHitsCount() / Max ( m_dZoneStartTerm[iZone]->GetDocsCount(), 1 );
+		int iReserveEnd = m_dZoneEndTerm[iZone]->GetHitsCount() / Max ( m_dZoneEndTerm[iZone]->GetDocsCount(), 1 );
+		int iReserve = Max ( iReserveStart, iReserveEnd );
 
 		// loop documents one by one
 		while ( pStartHits && pEndHits )
@@ -5886,8 +5832,33 @@ SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLa
 			// load all hits for current document
 			SphDocID_t uCur = pStartHits->m_uDocid;
 
-			tKey.m_uDocid = uCur;
-			pZone = &m_hZoneInfo.AddUnique ( tKey );
+			// FIXME!!! replace by iterate then add elements to vector instead of searching each time
+			ZoneHits_t * pZone = NULL;
+			CSphVector<ZoneInfo_t> & dZones = m_dZoneInfo[iZone];
+			if ( dZones.GetLength() )
+			{
+				ZoneInfo_t * pInfo = sphBinarySearch ( dZones.Begin(), &dZones.Last(), bind ( &ZoneInfo_t::m_uDocid ), uCur );
+				if ( pInfo )
+					pZone = pInfo->m_pHits;
+			}
+			if ( !pZone )
+			{
+				if ( dZones.GetLength() && dZones.Last().m_uDocid>uCur )
+				{
+					int iInsertPos = FindSpan ( dZones, uCur );
+					assert ( iInsertPos>=0 );
+					dZones.Insert ( iInsertPos, ZoneInfo_t() );
+					dZones[iInsertPos].m_uDocid = uCur;
+					pZone = dZones[iInsertPos].m_pHits = new ZoneHits_t();
+				} else
+				{
+					ZoneInfo_t & tElem = dZones.Add ();
+					tElem.m_uDocid = uCur;
+					pZone = tElem.m_pHits = new ZoneHits_t();
+				}
+				pZone->m_dStarts.Reserve ( iReserve );
+				pZone->m_dEnds.Reserve ( iReserve );
+			}
 
 			assert ( pEndHits->m_uDocid==uCur );
 
@@ -5968,9 +5939,9 @@ SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLa
 				}
 
 				if ( pStartHits->m_uDocid==DOCID_MAX )
-					pStartHits = m_dZoneStartTerm[iZone]->GetHitsChunk ( dCache, DOCID_MAX );
+					pStartHits = m_dZoneStartTerm[iZone]->GetHitsChunk ( dCache );
 				if ( pEndHits->m_uDocid==DOCID_MAX )
-					pEndHits = m_dZoneEndTerm[iZone]->GetHitsChunk ( dCache, DOCID_MAX );
+					pEndHits = m_dZoneEndTerm[iZone]->GetHitsChunk ( dCache );
 			}
 
 			// data sanity checks
@@ -5987,21 +5958,7 @@ SphZoneHit_e ExtRanker_c::IsInZone ( int iZone, const ExtHit_t * pHit, int * pLa
 	m_dZoneEnd[iZone] = pEnd;
 
 	// cached a bunch of spans, try our check again
-	tKey.m_uDocid = pHit->m_uDocid;
-	pZone = m_hZoneInfo ( tKey );
-	if ( pZone )
-	{
-		// remove end markers that might mess up ordering
-		DWORD uPosWithField = HITMAN::GetPosWithField ( pHit->m_uHitpos );
-		int iSpan = FindSpan ( pZone->m_dStarts, uPosWithField );
-		if ( iSpan<0 || uPosWithField>pZone->m_dEnds[iSpan] )
-			return SPH_ZONE_NO_SPAN;
-		if ( pLastSpan )
-			*pLastSpan = iSpan;
-		return SPH_ZONE_FOUND;
-	}
-
-	return SPH_ZONE_NO_DOCUMENT;
+	return ZoneCacheFind ( m_dZoneInfo, iZone, pHit, pLastSpan );
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -6077,26 +6034,24 @@ int ExtRanker_None_c::GetMatches ()
 //////////////////////////////////////////////////////////////////////////
 
 template < typename STATE >
-ExtRanker_T<STATE>::ExtRanker_T ( const XQQuery_t & tXQ, const ISphQwordSetup & tSetup ) : ExtRanker_c ( tXQ, tSetup )
+ExtRanker_T<STATE>::ExtRanker_T ( const XQQuery_t & tXQ, const ISphQwordSetup & tSetup )
+	: ExtRanker_c ( tXQ, tSetup )
 {
-	if ( m_bZSlist && !m_pRoot->GetExtraData ( EXTRA_GET_DATA_ZONESPANS, (void**) & m_pZones ))
-		m_bZSlist = false;
+	// FIXME!!! move out the disable of m_bZSlist in case no zonespan nodes
 	if ( m_bZSlist )
-	{
-		m_dZonespans.Reserve ( ExtNode_i::MAX_DOCS );
-	}
-	m_dZonespans.Resize ( 1 );
+		m_dZonespans.Reserve ( ExtNode_i::MAX_DOCS * m_dZones.GetLength() );
+
 	m_pHitBase = NULL;
 }
 
 
-static inline const ExtHit_t * RankerGetHits ( CSphQueryProfile * pProfile, ExtNode_i * pRoot, const ExtDoc_t * pDocs, SphDocID_t uMaxID )
+static inline const ExtHit_t * RankerGetHits ( CSphQueryProfile * pProfile, ExtNode_i * pRoot, const ExtDoc_t * pDocs )
 {
 	if ( !pProfile )
-		return pRoot->GetHitsChunk ( pDocs, uMaxID );
+		return pRoot->GetHitsChunk ( pDocs );
 
 	pProfile->Switch ( SPH_QSTATE_GET_HITS );
-	const ExtHit_t * pHlist = pRoot->GetHitsChunk ( pDocs, uMaxID );
+	const ExtHit_t * pHlist = pRoot->GetHitsChunk ( pDocs );
 	pProfile->Switch ( SPH_QSTATE_RANK );
 	return pHlist;
 }
@@ -6120,8 +6075,7 @@ int ExtRanker_T<STATE>::GetMatches ()
 	if ( m_bZSlist )
 	{
 		dSpans.Resize ( m_dZones.GetLength() );
-		ARRAY_FOREACH ( i, dSpans )
-			dSpans[i] = -1;
+		dSpans.Fill ( -1 );
 	}
 
 	// warmup if necessary
@@ -6132,7 +6086,7 @@ int ExtRanker_T<STATE>::GetMatches ()
 		if ( !pDocs )
 			return iMatches;
 
-		pHlist = RankerGetHits ( pProfile, m_pRoot, pDocs, m_uMaxID );
+		pHlist = RankerGetHits ( pProfile, m_pRoot, pDocs );
 		if ( !pHlist )
 			return iMatches;
 	}
@@ -6150,14 +6104,19 @@ int ExtRanker_T<STATE>::GetMatches ()
 			m_tState.Update ( pHlist );
 			if ( m_bZSlist )
 			{
-				int * pZones = m_pZones->GetZVec ( pHlist-pHitBase );
 				ARRAY_FOREACH ( i, m_dZones )
-					if ( pZones[i]>=0 && dSpans[i]!=pZones[i] )
+				{
+					int iSpan;
+					if ( IsInZone ( i, pHlist, &iSpan )!=SPH_ZONE_FOUND )
+						continue;
+
+					if ( iSpan!=dSpans[i] )
 					{
 						m_dZonespans.Add ( i );
-						m_dZonespans.Add ( pZones[i] );
-						dSpans[i] = pZones[i];
+						m_dZonespans.Add ( iSpan );
+						dSpans[i] = iSpan;
 					}
+				}
 			}
 			++pHlist;
 		}
@@ -6166,7 +6125,7 @@ int ExtRanker_T<STATE>::GetMatches ()
 		if ( pHlist->m_uDocid==DOCID_MAX )
 		{
 			assert ( pDocs );
-			pHlist = RankerGetHits ( pProfile, m_pRoot, pDocs, m_uMaxID );
+			pHlist = RankerGetHits ( pProfile, m_pRoot, pDocs );
 			if ( pHlist )
 				continue;
 		}
@@ -6179,12 +6138,13 @@ int ExtRanker_T<STATE>::GetMatches ()
 			m_dMatches[iMatches].m_iWeight = m_tState.Finalize ( m_dMatches[iMatches] );
 			if ( m_bZSlist )
 			{
-				m_dZonespans[iLastZoneData] = m_dZonespans.GetLength()-iLastZoneData-1;
+				m_dZonespans[iLastZoneData] = m_dZonespans.GetLength() - iLastZoneData - 1;
 				m_dMatches[iMatches].m_iTag = iLastZoneData;
+
 				iLastZoneData = m_dZonespans.GetLength();
 				m_dZonespans.Add(0);
-				ARRAY_FOREACH ( i, dSpans )
-					dSpans[i] = -1;
+
+				dSpans.Fill ( -1 );
 			}
 			iMatches++;
 		}
@@ -6192,6 +6152,9 @@ int ExtRanker_T<STATE>::GetMatches ()
 		// boundary checks
 		if ( !pHlist )
 		{
+			if ( m_bZSlist && uCurDocid )
+				CleanupZones ( uCurDocid );
+
 			// there are no more hits for current docs block; do we have a next one?
 			assert ( pDocs );
 			pDoc = pDocs = GetFilteredDocs ();
@@ -6201,7 +6164,7 @@ int ExtRanker_T<STATE>::GetMatches ()
 				break;
 
 			// we do, get some hits
-			pHlist = m_pRoot->GetHitsChunk ( pDocs, m_uMaxID );
+			pHlist = m_pRoot->GetHitsChunk ( pDocs );
 			assert ( pHlist ); // fresh docs block, must have hits
 		}
 
@@ -6677,12 +6640,10 @@ public:
 
 private:
 	int				m_iElementSize;
-	int				m_iNextFree;
 
-	CSphTightVector<BYTE>	m_dPool;
-	CSphTightVector<int>	m_dFree;
+	CSphFixedVector<BYTE>	m_dPool;
 	SphFactorHash_t			m_dHash;
-
+	CSphFreeList			m_dFree;
 	SphFactorHashEntry_t * Find ( SphDocID_t uId ) const;
 	inline DWORD	HashFunc ( SphDocID_t uId ) const;
 	bool			FlushEntry ( SphFactorHashEntry_t * pEntry );
@@ -6691,7 +6652,8 @@ private:
 
 FactorPool_c::FactorPool_c ()
 	: m_iElementSize	( 0 )
-	, m_iNextFree		( 0 )
+	, m_dPool ( 0 )
+	, m_dHash ( 0 )
 {
 }
 
@@ -6700,9 +6662,9 @@ void FactorPool_c::Prealloc ( int iElementSize, int nElements )
 {
 	m_iElementSize = iElementSize;
 
-	m_dPool.Resize ( nElements*GetIntElementSize() );
-	m_dHash.Resize ( nElements );
-	m_dFree.Reserve ( nElements );
+	m_dPool.Reset ( nElements*GetIntElementSize() );
+	m_dHash.Reset ( nElements );
+	m_dFree.Reset ( nElements );
 
 	memset ( m_dHash.Begin(), 0, sizeof(m_dHash[0])*m_dHash.GetLength() );
 }
@@ -6710,17 +6672,9 @@ void FactorPool_c::Prealloc ( int iElementSize, int nElements )
 
 BYTE * FactorPool_c::Alloc ()
 {
-	if ( m_dFree.GetLength() )
-	{
-		int iIndex = m_dFree.Pop();
-		return m_dPool.Begin() + iIndex*GetIntElementSize();
-	}
-
-	assert ( m_iNextFree<=m_dPool.GetLength() / GetIntElementSize() );
-
-	BYTE * pAllocated = m_dPool.Begin()+m_iNextFree*GetIntElementSize();
-	m_iNextFree++;
-	return pAllocated;
+	int iIndex = m_dFree.Get();
+	assert ( iIndex>=0 && iIndex*GetIntElementSize()<m_dPool.GetLength() );
+	return m_dPool.Begin() + iIndex * GetIntElementSize();
 }
 
 
@@ -6733,7 +6687,7 @@ void FactorPool_c::Free ( BYTE * pPtr )
 	assert ( pPtr>=m_dPool.Begin() && pPtr<&( m_dPool.Last() ) );
 
 	int iIndex = ( pPtr-m_dPool.Begin() )/GetIntElementSize();
-	m_dFree.Add(iIndex);
+	m_dFree.Free ( iIndex );
 }
 
 
@@ -6941,9 +6895,11 @@ public:
 	int					m_iMaxQpos;			///< among all words, including dupes
 	CSphVector<WORD>	m_dTermDupes;
 	CSphVector<Hitpos_t>	m_dTermsHit;
+	CSphBitvec			m_tHasMultiQpos;
+	int					m_uLastSpanStart;
 
 	FactorPool_c 		m_tFactorPool;
-	int					m_iMaxMatches;
+	int					m_iPoolMatchCapacity;
 
 	// per-query stuff
 	int					m_iMaxLCS;
@@ -7037,10 +6993,10 @@ public:
 			// that is, in (aa NOT bb) case, we want a value of 1, not 2
 			// there might be tail excluded terms these not affected MaxQpos
 			ExtQword_t & dCur = hQwords.IterateGet();
+			const int iQueryPos = dCur.m_iQueryPos;
 			if ( dCur.m_bExcluded )
 				continue;
 
-			const int iQueryPos = dCur.m_iQueryPos;
 			bool bQposUsed = m_tKeywords.BitGet ( iQueryPos );
 			bGotExpanded |= bQposUsed;
 			m_iQueryWordCount += ( bQposUsed ? 0 : 1 ); // count only one term at that position
@@ -7079,17 +7035,34 @@ public:
 		if ( !pRoot )
 			return;
 
-		m_dTermDupes.Resize ( iMaxQpos + 1 );
 		m_dTermsHit.Resize ( iMaxQpos + 1 );
-		m_dTermDupes.Fill ( 0 );
 		m_dTermsHit.Fill ( EMPTY_HIT );
-		pRoot->GetTermDupes ( hQwords, m_dTermDupes );
+		m_tHasMultiQpos.Init ( iMaxQpos+1 );
+		m_dTermDupes.Resize ( iMaxQpos+1 );
+		m_dTermDupes.Fill ( (WORD)-1 );
+
+		CSphVector<TermPos_t> dTerms;
+		dTerms.Reserve ( iMaxQpos );
+		pRoot->GetTerms ( hQwords, dTerms );
+
 		// reset excluded for all duplicates
-		ARRAY_FOREACH ( i, m_dTermDupes )
+		ARRAY_FOREACH ( i, dTerms )
 		{
-			WORD uQpos = m_dTermDupes[i];
-			if ( uQpos && i!=uQpos && m_tKeywords.BitGet ( uQpos ) )
-				m_tKeywords.BitSet ( i );
+			WORD uAtomPos = dTerms[i].m_uAtomPos;
+			WORD uQpos = dTerms[i].m_uQueryPos;
+			if ( uAtomPos!=uQpos )
+			{
+				m_tHasMultiQpos.BitSet ( uAtomPos );
+				m_tHasMultiQpos.BitSet ( uQpos );
+			}
+
+			m_tKeywords.BitSet ( uAtomPos );
+			m_tKeywords.BitSet ( uQpos );
+			m_dTermDupes[uAtomPos] = uQpos;
+
+			// fill missed idf for dups
+			if ( fabs ( m_dIDF[uAtomPos] )<=1e-6 )
+				m_dIDF[uAtomPos] = m_dIDF[uQpos];
 		}
 	}
 
@@ -7141,12 +7114,13 @@ public:
 	{
 		// OPTIMIZE? quick full wipe? (using dwords/sse/whatever)
 		m_uCurLCS = 0;
-		if ( HANDLE_DUPES )
+		if_const ( HANDLE_DUPES )
 		{
 			m_uCurPos = 0;
 			m_uLcsTailPos = 0;
 			m_uLcsTailQposMask = 0;
 			m_uCurQposMask = 0;
+			m_uLastSpanStart = 0;
 		}
 		m_iExpDelta = -1;
 		m_iLastHitPos = -1;
@@ -7209,7 +7183,8 @@ protected:
 
 private:
 	virtual bool	ExtraDataImpl ( ExtraData_e eType, void ** ppResult );
-	BYTE *			PackFactors ( int * pSize = NULL );
+	int				GetMaxPackedLength();
+	BYTE *			PackFactors();
 };
 
 /// extra expression ranker node types
@@ -7514,6 +7489,12 @@ struct Expr_Sum_T : public ISphExpr
 		}
 		return iRes;
 	}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		assert ( m_pArg );
+		m_pArg->Command ( eCmd, pArg );
+	}
 };
 
 
@@ -7568,6 +7549,12 @@ struct Expr_Top_T : public ISphExpr
 			m_pState->m_iCurrentField++;
 		}
 		return iRes;
+	}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		assert ( m_pArg );
+		m_pArg->Command ( eCmd, pArg );
 	}
 };
 
@@ -7926,7 +7913,7 @@ RankerState_Expr_fn <NEED_PACKEDFACTORS, HANDLE_DUPES>::RankerState_Expr_fn ()
 	: m_pWeights ( NULL )
 	, m_sExpr ( NULL )
 	, m_pExpr ( NULL )
-	, m_iMaxMatches ( 0 )
+	, m_iPoolMatchCapacity ( 0 )
 	, m_iMaxLCS ( 0 )
 	, m_iQueryWordCount ( 0 )
 	, m_iAtcHitStart ( 0 )
@@ -8008,7 +7995,7 @@ bool RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Init ( int iFields, 
 	// parse expression
 	bool bUsesWeight;
 	ExprRankerHook_T<NEED_PACKEDFACTORS, HANDLE_DUPES> tHook ( this );
-	m_pExpr = sphExprParse ( m_sExpr, *m_pSchema, &m_eExprType, &bUsesWeight, sError, NULL, &tHook ); // FIXME!!! profile UDF here too
+	m_pExpr = sphExprParse ( m_sExpr, *m_pSchema, &m_eExprType, &bUsesWeight, sError, NULL, SPH_COLLATION_DEFAULT, &tHook ); // FIXME!!! profile UDF here too
 	if ( !m_pExpr )
 		return false;
 	if ( m_eExprType!=SPH_ATTR_INTEGER && m_eExprType!=SPH_ATTR_FLOAT )
@@ -8054,7 +8041,7 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 	const int iPos = HITMAN::GetPos ( pHlist->m_uHitpos );
 	const DWORD uPosWithField = HITMAN::GetPosWithField ( pHlist->m_uHitpos );
 
-	if ( !HANDLE_DUPES )
+	if_const ( !HANDLE_DUPES )
 	{
 		// update LCS
 		int iDelta = uPosWithField - pHlist->m_uQuerypos;
@@ -8083,11 +8070,17 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 				m_iMinBestSpanPos [ uField ] = iPos - m_uCurLCS + 1;
 		}
 		m_iExpDelta = iDelta + pHlist->m_uSpanlen - 1;
+		m_iLastHitPos = uPosWithField;
 	} else
 	{
 		// reset accumulated data from previous field
 		if ( (DWORD)HITMAN::GetField ( m_uCurPos )!=uField )
+		{
+			m_uCurPos = 0;
+			m_uLcsTailPos = 0;
 			m_uCurQposMask = 0;
+			m_uCurLCS = 0;
+		}
 
 		if ( (DWORD)uPosWithField!=m_uCurPos )
 		{
@@ -8105,6 +8098,7 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 			{
 				m_uLCS [ uField ] = BYTE ( pHlist->m_uWeight );
 				m_iMinBestSpanPos [ uField ] = iPos;
+				m_uLastSpanStart = iPos;
 			}
 		}
 
@@ -8113,7 +8107,7 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 
 		// and check if that results in a better lcs match now
 		int iDelta = ( m_uCurPos-m_uLcsTailPos );
-		if ( ( m_uCurQposMask >> iDelta ) & m_uLcsTailQposMask )
+		if ( iDelta && ( m_uCurQposMask >> iDelta ) & m_uLcsTailQposMask )
 		{
 			// cool, it matched!
 			m_uLcsTailQposMask = ( 1UL << pHlist->m_uQuerypos ); // our lcs span now ends with a specific qpos
@@ -8122,10 +8116,10 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 			m_uCurQposMask = 0; // and we should avoid matching subsequent hits on the same hitpos
 
 			// update per-field vector
-			if ( m_uCurLCS>m_uLCS [ uField ] )
+			if ( m_uCurLCS>m_uLCS[uField] )
 			{
-				m_uLCS [ uField ] = m_uCurLCS;
-				m_iMinBestSpanPos [ uField ] = iPos - m_uCurLCS + 1;
+				m_uLCS[uField] = m_uCurLCS;
+				m_iMinBestSpanPos[uField] = m_uLastSpanStart;
 			}
 		}
 
@@ -8140,8 +8134,8 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 		}
 		m_iExpDelta = iDelta + pHlist->m_uSpanlen - 1;
 	}
-	m_iLastHitPos = uPosWithField;
 
+	bool bLetsKeepup = false;
 	// update LCCS
 	if ( m_iQueryPosLCCS==pHlist->m_uQuerypos && m_iHitPosLCCS==iPos )
 	{
@@ -8149,12 +8143,21 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 		m_fWeightLCCS += m_dIDF [ pHlist->m_uQuerypos ];
 	} else
 	{
-		m_iLenLCCS = 1;
-		m_fWeightLCCS = m_dIDF [ pHlist->m_uQuerypos ];
+		if_const ( HANDLE_DUPES && m_iHitPosLCCS && iPos<=m_iHitPosLCCS && m_tHasMultiQpos.BitGet ( pHlist->m_uQuerypos ) )
+		{
+			bLetsKeepup = true;
+		} else
+		{
+			m_iLenLCCS = 1;
+			m_fWeightLCCS = m_dIDF[pHlist->m_uQuerypos];
+		}
 	}
-	WORD iNextQPos = m_dNextQueryPos [ pHlist->m_uQuerypos ];
-	m_iQueryPosLCCS = iNextQPos;
-	m_iHitPosLCCS = iPos + pHlist->m_uSpanlen + iNextQPos - pHlist->m_uQuerypos - 1;
+	if ( !bLetsKeepup )
+	{
+		WORD iNextQPos = m_dNextQueryPos[pHlist->m_uQuerypos];
+		m_iQueryPosLCCS = iNextQPos;
+		m_iHitPosLCCS = iPos + pHlist->m_uSpanlen + iNextQPos - pHlist->m_uQuerypos - 1;
+	}
 	if ( m_dLCCS[uField]<=m_iLenLCCS ) // FIXME!!! check weight too or keep length and weight separate
 	{
 		m_dLCCS[uField] = m_iLenLCCS;
@@ -8194,8 +8197,9 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 	if_const ( HANDLE_DUPES && bUniq )
 	{
 		uQpos = m_dTermDupes [ uQpos ];
-		bUniq = ( m_dTermsHit[uQpos]!=pHlist->m_uHitpos );
+		bUniq = ( m_dTermsHit[uQpos]!=pHlist->m_uHitpos && m_dTermsHit[0]!=pHlist->m_uHitpos );
 		m_dTermsHit[uQpos] = pHlist->m_uHitpos;
+		m_dTermsHit[0] = pHlist->m_uHitpos;
 	}
 	if ( bUniq )
 	{
@@ -8230,18 +8234,22 @@ void RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Update ( const ExtHi
 		m_iMinHitPos[uField] = iPos;
 
 	// update hit window, max_window_hits factor
-	if ( m_dWindow.GetLength() )
+	if ( m_iWindowSize>1 )
 	{
-		// sorted_remove_if ( _1 + winsize <= hitpos ) )
-		int i = 0;
-		while ( i<m_dWindow.GetLength() && ( m_dWindow[i] + m_iWindowSize )<=pHlist->m_uHitpos )
-			i++;
-		for ( int j=0; j<m_dWindow.GetLength()-i; j++ )
-			m_dWindow[j] = m_dWindow[j+i];
-		m_dWindow.Resize ( m_dWindow.GetLength()-i );
-	}
-	m_dWindow.Add ( pHlist->m_uHitpos );
-	m_iMaxWindowHits[uField] = Max ( m_iMaxWindowHits[uField], m_dWindow.GetLength() );
+		if ( m_dWindow.GetLength() )
+		{
+			// sorted_remove_if ( _1 + winsize <= hitpos ) )
+			int i = 0;
+			while ( i<m_dWindow.GetLength() && ( m_dWindow[i] + m_iWindowSize )<=pHlist->m_uHitpos )
+				i++;
+			for ( int j=0; j<m_dWindow.GetLength()-i; j++ )
+				m_dWindow[j] = m_dWindow[j+i];
+			m_dWindow.Resize ( m_dWindow.GetLength()-i );
+		}
+		m_dWindow.Add ( pHlist->m_uHitpos );
+		m_iMaxWindowHits[uField] = Max ( m_iMaxWindowHits[uField], m_dWindow.GetLength() );
+	} else
+		m_iMaxWindowHits[uField] = 1;
 
 	// update exact_order factor
 	if ( (int)uField!=m_iLastField )
@@ -8453,22 +8461,19 @@ void RankerState_Expr_fn<PF, HANDLE_DUPES>::UpdateMinGaps ( const ExtHit_t * pHl
 }
 
 
-template < bool NEED_PACKEDFACTORS, bool HANDLE_DUPES >
-BYTE * RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::PackFactors ( int * pSize )
+template<bool A1, bool A2>
+int RankerState_Expr_fn<A1,A2>::GetMaxPackedLength()
 {
-	DWORD * pPackStart = NULL;
+	return sizeof(DWORD)*( 8 + m_tExactHit.GetSize() + m_tExactOrder.GetSize() + m_iFields*15 + m_iMaxQpos*4 + m_dFieldTF.GetLength() );
+}
 
-	if ( pSize )
-	{
-		const DWORD MAX_PACKED_SIZE = 2048;
-		pPackStart = new DWORD [ MAX_PACKED_SIZE ];
-	} else
-	{
-		pPackStart = (DWORD *)m_tFactorPool.Alloc();
-		assert ( pPackStart );
-	}
 
+template < bool NEED_PACKEDFACTORS, bool HANDLE_DUPES >
+BYTE * RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::PackFactors()
+{
+	DWORD * pPackStart = (DWORD *)m_tFactorPool.Alloc();
 	DWORD * pPack = pPackStart;
+	assert ( pPackStart );
 
 	// leave space for size
 	pPack++;
@@ -8476,7 +8481,7 @@ BYTE * RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::PackFactors ( int 
 
 	// document level factors
 	*pPack++ = m_uDocBM25;
-	*pPack++ = *(DWORD*)&m_fDocBM25A;
+	*pPack++ = sphF2DW ( m_fDocBM25A );
 	*pPack++ = *m_tMatchedFields.Begin();
 	*pPack++ = m_uDocWordCount;
 
@@ -8492,24 +8497,23 @@ BYTE * RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::PackFactors ( int 
 	{
 		DWORD uHit = m_uHitCount[i];
 		*pPack++ = uHit;
-
-		if ( uHit || pSize )
+		if ( uHit )
 		{
 			*pPack++ = (DWORD)i;
 			*pPack++ = m_uLCS[i];
 			*pPack++ = m_uWordCount[i];
-			*pPack++ = *(DWORD*)&m_dTFIDF[i];
-			*pPack++ = *(DWORD*)&m_dMinIDF[i];
-			*pPack++ = *(DWORD*)&m_dMaxIDF[i];
-			*pPack++ = *(DWORD*)&m_dSumIDF[i];
+			*pPack++ = sphF2DW ( m_dTFIDF[i] );
+			*pPack++ = sphF2DW ( m_dMinIDF[i] );
+			*pPack++ = sphF2DW ( m_dMaxIDF[i] );
+			*pPack++ = sphF2DW ( m_dSumIDF[i] );
 			*pPack++ = (DWORD)m_iMinHitPos[i];
 			*pPack++ = (DWORD)m_iMinBestSpanPos[i];
 			// had exact_hit here before v.4
 			*pPack++ = (DWORD)m_iMaxWindowHits[i];
 			*pPack++ = (DWORD)m_iMinGaps[i]; // added in v.3
-			*pPack++ = *(DWORD*)&m_dAtc[i];			// added in v.4
+			*pPack++ = sphF2DW ( m_dAtc[i] );			// added in v.4
 			*pPack++ = m_dLCCS[i];					// added in v.5
-			*pPack++ = *(DWORD*)&m_dWLCCS[i];	// added in v.5
+			*pPack++ = sphF2DW ( m_dWLCCS[i] );	// added in v.5
 		}
 	}
 
@@ -8519,7 +8523,7 @@ BYTE * RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::PackFactors ( int 
 	{
 		DWORD uKeywordMask = !IsTermSkipped(i); // !COMMIT !m_tExcluded.BitGet(i);
 		*pPack++ = uKeywordMask;
-		if ( uKeywordMask || pSize )
+		if ( uKeywordMask )
 		{
 			*pPack++ = (DWORD)i;
 			*pPack++ = (DWORD)m_dTF[i];
@@ -8530,21 +8534,11 @@ BYTE * RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::PackFactors ( int 
 	// m_dFieldTF = iWord + iField * ( 1 + iWordsCount )
 	// FIXME! pack these sparse factors ( however these should fit into fixed-size FactorPool block )
 	*pPack++ = m_dFieldTF.GetLength();
-	if ( !pSize )
-		memcpy ( pPack, m_dFieldTF.Begin(), m_dFieldTF.GetLength()*sizeof(m_dFieldTF[0]) );
+	memcpy ( pPack, m_dFieldTF.Begin(), m_dFieldTF.GetLength()*sizeof(m_dFieldTF[0]) );
 	pPack += m_dFieldTF.GetLength();
 
 	*pPackStart = (pPack-pPackStart)*sizeof(DWORD);
-
-	if ( pSize )
-	{
-		*pSize = (pPack-pPackStart)*sizeof(DWORD);
-		delete [] pPackStart;
-		return NULL;
-	}
-
 	assert ( (pPack-pPackStart)*sizeof(DWORD)<=(DWORD)m_tFactorPool.GetElementSize() );
-
 	return (BYTE*)pPackStart;
 }
 
@@ -8557,13 +8551,14 @@ bool RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::ExtraDataImpl ( Extr
 		switch ( eType )
 		{
 			case EXTRA_SET_MVAPOOL:
-				m_pExpr->Command ( SPH_EXPR_SET_MVA_POOL, (DWORD*)ppResult );
+				m_pExpr->Command ( SPH_EXPR_SET_MVA_POOL, ppResult );
 				return true;
 			case EXTRA_SET_STRINGPOOL:
-				m_pExpr->Command ( SPH_EXPR_SET_STRING_POOL, (BYTE*)ppResult );
+				m_pExpr->Command ( SPH_EXPR_SET_STRING_POOL, ppResult );
 				return true;
-			case EXTRA_SET_MAXMATCHES:
-				m_iMaxMatches = *(int*)ppResult;
+			case EXTRA_SET_POOL_CAPACITY:
+				m_iPoolMatchCapacity = *(int*)ppResult;
+				m_iPoolMatchCapacity += ExtNode_i::MAX_DOCS;
 				return true;
 			case EXTRA_SET_MATCHPUSHED:
 				m_tFactorPool.AddRef ( *(SphDocID_t*)ppResult );
@@ -8589,6 +8584,13 @@ bool RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::ExtraDataImpl ( Extr
 					pState->m_iMaxQpos = m_iMaxQpos;
 				}
 				return true;
+			case EXTRA_GET_POOL_SIZE:
+				if_const ( NEED_PACKEDFACTORS )
+				{
+					*(int64_t*)ppResult = (int64_t)GetMaxPackedLength() * m_iPoolMatchCapacity;
+					return true;
+				} else
+					return false;
 			default:
 				return false;
 		}
@@ -8619,12 +8621,7 @@ DWORD RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Finalize ( const CS
 	{
 		// pack factors
 		if ( !m_tFactorPool.IsInitialized() )
-		{
-			int iPoolElementSize = 0;
-			PackFactors ( &iPoolElementSize );
-			m_tFactorPool.Prealloc ( iPoolElementSize, m_iMaxMatches+ExtNode_i::MAX_DOCS );
-		}
-
+			m_tFactorPool.Prealloc ( GetMaxPackedLength(), m_iPoolMatchCapacity );
 		m_tFactorPool.AddToHash ( tMatch.m_uDocID, PackFactors() );
 	}
 
@@ -8633,7 +8630,7 @@ DWORD RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Finalize ( const CS
 		? m_pExpr->IntEval ( tMatch )
 		: (DWORD)m_pExpr->Eval ( tMatch );
 
-	if ( HANDLE_DUPES )
+	if_const ( HANDLE_DUPES )
 	{
 		m_uCurPos = 0;
 		m_uLcsTailPos = 0;
@@ -8643,6 +8640,12 @@ DWORD RankerState_Expr_fn<NEED_PACKEDFACTORS, HANDLE_DUPES>::Finalize ( const CS
 
 	// cleanup
 	ResetDocFactors();
+	memset ( m_dLCCS, 0 , sizeof(m_dLCCS) );
+	memset ( m_dWLCCS, 0, sizeof(m_dWLCCS) );
+	m_iQueryPosLCCS = 0;
+	m_iHitPosLCCS = 0;
+	m_iLenLCCS = 0;
+	m_fWeightLCCS = 0.0f;
 
 	// done
 	return uRes;
@@ -9145,14 +9148,13 @@ void CSphHitMarker::Mark ( CSphVector<SphHitMark_t> & dMarked )
 	const ExtHit_t * pHits = NULL;
 	const ExtDoc_t * pDocs = NULL;
 
-	SphDocID_t uMaxID = 0;
-	pDocs = m_pRoot->GetDocsChunk ( &uMaxID );
+	pDocs = m_pRoot->GetDocsChunk();
 	if ( !pDocs )
 		return;
 
 	for ( ;; )
 	{
-		pHits = m_pRoot->GetHitsChunk ( pDocs, uMaxID );
+		pHits = m_pRoot->GetHitsChunk ( pDocs );
 		if ( !pHits )
 			break;
 
@@ -9292,15 +9294,20 @@ public:
 
 	virtual void HintDocid ( SphDocID_t ) {}
 
-	virtual const ExtDoc_t * GetDocsChunk ( SphDocID_t * pMaxID );
+	virtual const ExtDoc_t * GetDocsChunk();
 
-	virtual const ExtHit_t * GetHitsChunk ( const ExtDoc_t * pMatched, SphDocID_t uMaxID );
+	virtual const ExtHit_t * GetHitsChunk ( const ExtDoc_t * pMatched );
 
 	virtual int GetQwords ( ExtQwordsHash_t & hQwords )
 	{
-		if ( m_pChild )
-			return m_pChild->GetQwords ( hQwords );
-		return -1;
+		if ( !m_pChild )
+			return -1;
+
+		int iChildAtom = m_pChild->GetQwords ( hQwords );
+		if ( iChildAtom<0 )
+			return -1;
+
+		return m_iAtomPos + iChildAtom;
 	}
 
 	virtual void SetQwordsIDF ( const ExtQwordsHash_t & hQwords )
@@ -9315,10 +9322,10 @@ public:
 		}
 	}
 
-	virtual void GetTermDupes ( const ExtQwordsHash_t & hQwords, CSphVector<WORD> & dTermDupes ) const
+	virtual void GetTerms ( const ExtQwordsHash_t & hQwords, CSphVector<TermPos_t> & dTermDupes ) const
 	{
 		if ( m_pChild )
-			m_pChild->GetTermDupes ( hQwords, dTermDupes );
+			m_pChild->GetTerms ( hQwords, dTermDupes );
 	}
 
 	virtual bool GotHitless ()
@@ -9358,9 +9365,8 @@ bool NodeCacheContainer_t::WarmupCache ( ExtNode_i * pChild, int iQwords )
 	assert ( pChild );
 	assert ( m_pSetup );
 
-	SphDocID_t uMaxID = 0;
 	m_iAtomPos = pChild->m_iAtomPos;
-	const ExtDoc_t * pChunk = pChild->GetDocsChunk ( &uMaxID );
+	const ExtDoc_t * pChunk = pChild->GetDocsChunk();
 	int iStride = 0;
 
 	if ( pChunk && pChunk->m_pDocinfo )
@@ -9389,8 +9395,7 @@ bool NodeCacheContainer_t::WarmupCache ( ExtNode_i * pChild, int iQwords )
 		const ExtHit_t * pHits = NULL;
 		if ( iHasDocs )
 		{
-			SphDocID_t uLastDocid = m_Docs.Last().m_uDocid;
-			while (	( pHits = pChild->GetHitsChunk ( pChunkHits, uLastDocid ) )!=NULL )
+			while (	( pHits = pChild->GetHitsChunk ( pChunkHits ) )!=NULL )
 			{
 				for ( ; pHits->m_uDocid!=DOCID_MAX; pHits++ )
 				{
@@ -9408,7 +9413,7 @@ bool NodeCacheContainer_t::WarmupCache ( ExtNode_i * pChild, int iQwords )
 			m_pSetup = NULL;
 			return false;
 		}
-		pChunk = pChild->GetDocsChunk ( &uMaxID );
+		pChunk = pChild->GetDocsChunk();
 	}
 
 	if ( iStride )
@@ -9465,13 +9470,13 @@ void ExtNodeCached_t::StepForwardToHitsFor ( SphDocID_t uDocId )
 	m_iHitIndex = iEnd;
 }
 
-const ExtDoc_t * ExtNodeCached_t::GetDocsChunk ( SphDocID_t * pMaxID )
+const ExtDoc_t * ExtNodeCached_t::GetDocsChunk()
 {
 	if ( !m_pNode || !m_pChild )
 		return NULL;
 
 	if ( !m_pNode->m_StateOk )
-		return m_pChild->GetDocsChunk ( pMaxID );
+		return m_pChild->GetDocsChunk();
 
 	if ( m_iMaxTimer>0 && sphMicroTimer()>=m_iMaxTimer )
 	{
@@ -9479,8 +9484,6 @@ const ExtDoc_t * ExtNodeCached_t::GetDocsChunk ( SphDocID_t * pMaxID )
 			*m_pWarning = "query time exceeded max_query_time";
 		return NULL;
 	}
-
-	m_uMaxID = 0;
 
 	int iDoc = Min ( m_iDocIndex+MAX_DOCS-1, m_pNode->m_Docs.GetLength()-1 ) - m_iDocIndex;
 	memcpy ( &m_dDocs[0], &m_pNode->m_Docs[m_iDocIndex], sizeof(ExtDoc_t)*iDoc );
@@ -9490,16 +9493,16 @@ const ExtDoc_t * ExtNodeCached_t::GetDocsChunk ( SphDocID_t * pMaxID )
 	for ( int i=0; i<iDoc; i++ )
 		m_dDocs[i].m_fTFIDF /= m_iQwords;
 
-	return ReturnDocsChunk ( iDoc, pMaxID, "cached" );
+	return ReturnDocsChunk ( iDoc, "cached" );
 }
 
-const ExtHit_t * ExtNodeCached_t::GetHitsChunk ( const ExtDoc_t * pMatched, SphDocID_t uMaxID )
+const ExtHit_t * ExtNodeCached_t::GetHitsChunk ( const ExtDoc_t * pMatched )
 {
 	if ( !m_pNode || !m_pChild )
 		return NULL;
 
 	if ( !m_pNode->m_StateOk )
-		return m_pChild->GetHitsChunk ( pMatched, uMaxID );
+		return m_pChild->GetHitsChunk ( pMatched );
 
 	if ( !pMatched )
 		return NULL;
@@ -9515,10 +9518,6 @@ const ExtHit_t * ExtNodeCached_t::GetHitsChunk ( const ExtDoc_t * pMatched, SphD
 		// if we already emitted hits for this matches block, do not do that again
 		if ( uFirstMatch==m_uHitsOverFor )
 			return NULL;
-
-		// early reject whole block
-		if ( pMatched->m_uDocid > m_uMaxID ) return NULL;
-		if ( m_uMaxID && m_dDocs[0].m_uDocid > uMaxID ) return NULL;
 
 		// find match
 		pDoc = m_dDocs;
@@ -9574,7 +9573,7 @@ const ExtHit_t * ExtNodeCached_t::GetHitsChunk ( const ExtDoc_t * pMatched, SphD
 		}
 		m_iHitIndex++;
 		m_dHits[iHit] = tCachedHit;
-		m_dHits[iHit].m_uQuerypos = (WORD)( m_dHits[iHit].m_uQuerypos + m_iAtomPos - m_pNode->m_iAtomPos );
+		m_dHits[iHit].m_uQuerypos = (WORD)( tCachedHit.m_uQuerypos + m_iAtomPos - m_pNode->m_iAtomPos );
 		iHit++;
 	}
 
@@ -9616,5 +9615,5 @@ ExtNode_i * CSphQueryNodeCache::CreateProxy ( ExtNode_i * pChild, const XQNode_t
 }
 
 //
-// $Id: sphinxsearch.cpp 4682 2014-05-08 08:27:46Z kevg $
+// $Id$
 //

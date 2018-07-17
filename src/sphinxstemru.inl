@@ -1,5 +1,5 @@
 //
-// $Id: sphinxstemru.inl 4252 2013-10-12 13:24:10Z kevg $
+// $Id$
 //
 
 #undef LOC_TABLE_ENTRY
@@ -547,5 +547,5 @@ void LOC_PREFIX(stem_ru) ( LOC_CHAR_TYPE * word )
 #undef RUS
 
 //
-// $Id: sphinxstemru.inl 4252 2013-10-12 13:24:10Z kevg $
+// $Id$
 //

@@ -1,5 +1,5 @@
 /*
- * $Id: SphinxWordInfo.java 1172 2008-02-24 13:50:48Z shodan $
+ * $Id$
  */
 
 package org.sphx.api;
@@ -26,5 +26,5 @@ public class SphinxWordInfo
 }
 
 /*
- * $Id: SphinxWordInfo.java 1172 2008-02-24 13:50:48Z shodan $
+ * $Id$
  */

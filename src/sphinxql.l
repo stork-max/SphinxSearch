@@ -41,6 +41,7 @@ ALPHA				[a-zA-Z_]+
 "AS"				{ YYSTOREBOUNDS; return TOK_AS; }
 "ASC"				{ YYSTOREBOUNDS; return TOK_ASC; }
 "ATTACH"			{ YYSTOREBOUNDS; return TOK_ATTACH; }
+"ATTRIBUTES"		{ YYSTOREBOUNDS; return TOK_ATTRIBUTES; }
 "AVG"				{ YYSTOREBOUNDS; return TOK_AVG; }
 "BEGIN"				{ YYSTOREBOUNDS; return TOK_BEGIN; }
 "BETWEEN"			{ YYSTOREBOUNDS; return TOK_BETWEEN; }
@@ -49,6 +50,7 @@ ALPHA				[a-zA-Z_]+
 "BY"				{ YYSTOREBOUNDS; return TOK_BY; }
 "CALL"				{ YYSTOREBOUNDS; return TOK_CALL; }
 "CHARACTER"			{ YYSTOREBOUNDS; return TOK_CHARACTER; }
+"CHUNK"				{ YYSTOREBOUNDS; return TOK_CHUNK; }
 "COLLATION"			{ YYSTOREBOUNDS; return TOK_COLLATION; }
 "COLUMN"			{ YYSTOREBOUNDS; return TOK_COLUMN; }
 "COMMIT"			{ YYSTOREBOUNDS; return TOK_COMMIT; }
@@ -109,6 +111,7 @@ ALPHA				[a-zA-Z_]+
 "RAMCHUNK"			{ YYSTOREBOUNDS; return TOK_RAMCHUNK; }
 "RAND"				{ YYSTOREBOUNDS; return TOK_RAND; }
 "READ"				{ YYSTOREBOUNDS; return TOK_READ; }
+"RECONFIGURE"		{ YYSTOREBOUNDS; return TOK_RECONFIGURE; }
 "REPEATABLE"		{ YYSTOREBOUNDS; return TOK_REPEATABLE; }
 "REPLACE"			{ YYSTOREBOUNDS; return TOK_REPLACE; }
 "REMAP"				{ YYSTOREBOUNDS; return TOK_REMAP; }
@@ -118,6 +121,7 @@ ALPHA				[a-zA-Z_]+
 "SELECT"			{ YYSTOREBOUNDS; return TOK_SELECT; }
 "SERIALIZABLE"		{ YYSTOREBOUNDS; return TOK_SERIALIZABLE; }
 "SET"				{ YYSTOREBOUNDS; return TOK_SET; }
+"SETTINGS"			{ YYSTOREBOUNDS; return TOK_SETTINGS; }
 "SESSION"			{ YYSTOREBOUNDS; return TOK_SESSION; }
 "SHOW"				{ YYSTOREBOUNDS; return TOK_SHOW; }
 "SONAME"			{ YYSTOREBOUNDS; return TOK_SONAME; }
@@ -148,7 +152,7 @@ ALPHA				[a-zA-Z_]+
 ">="				{ YYSTOREBOUNDS; return TOK_GTE; }
 ":="				{ YYSTOREBOUNDS; return '='; }
 
-'([^'\\]|\\.|\\\\)*'			{ YYSTOREBOUNDS; pParser->m_pLastTokenStart = yytext; return TOK_QUOTED_STRING; }
+'([^'\\]|\\.|\\\\)*'			{ YYSTOREBOUNDS; pParser->m_pLastTokenStart = yytext; lvalp->m_iValue = ( (SphAttr_t)lvalp->m_iStart<<32 ) | ( lvalp->m_iEnd-lvalp->m_iStart ); return TOK_QUOTED_STRING; }
 
 {DIGIT}+\.{DIGIT}*{EXPONENT}?	{ YYSTOREBOUNDS; lvalp->m_fValue = (float)strtod ( yytext, NULL ); return TOK_CONST_FLOAT; }
 \.{DIGIT}+{EXPONENT}?			{ YYSTOREBOUNDS; lvalp->m_fValue = (float)strtod ( yytext, NULL ); return TOK_DOT_NUMBER; }
@@ -166,6 +170,7 @@ ALPHA				[a-zA-Z_]+
 @@{ID}\.{ID}		{ YYSTOREBOUNDS; return TOK_SYSVAR; }
 "`ID`"				{ YYSTOREBOUNDS; lvalp->m_iStart++; lvalp->m_iEnd--; return TOK_ID; }
 `{ID}`				{ YYSTOREBOUNDS; lvalp->m_iStart++; lvalp->m_iEnd--; return TOK_IDENT; }
+`{DIGIT}+{ID}`		{ YYSTOREBOUNDS; lvalp->m_iStart++; lvalp->m_iEnd--; return TOK_IDENT; } // allow `123xyz` column names
 
 {SPACE}+			{ ; }
 \.{SPACE}*{ID}		{ YYSTOREBOUNDS; return TOK_SUBKEY; }

@@ -1,10 +1,3 @@
-*.swp
-*.swo
-cscope.out
-ctags.files
-tags
-.hgignore
-
 # /
 /Makefile
 /config.status
@@ -17,6 +10,10 @@ tags
 /*.ncb
 /*.sdf
 /.hg
+
+/tags
+/cscope.out
+/ctags.files
 
 # /api/libsphinxclient/
 /api/libsphinxclient/*.ncb
@@ -45,10 +42,10 @@ tags
 /src/search
 /src/searchd
 /src/spelldump
+/src/mkdict
 /src/tests
 /src/wordbreaker
 /src/Makefile
-/src/mkdict
 /src/.deps
 /src/sphinxversion.h
 /src/*.o
@@ -71,3 +68,15 @@ tags
 /test/ql/data/*.lock
 /test/ql/*.class
 /test/ql/*.exe
+
+.cproject
+
+.project
+
+.settings/language.settings.xml
+
+*.sublime-project
+
+*.sublime-project
+
+*.sublime-workspace

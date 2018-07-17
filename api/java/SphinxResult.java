@@ -1,5 +1,5 @@
 /*
- * $Id: SphinxResult.java 1172 2008-02-24 13:50:48Z shodan $
+ * $Id$
  */
 
 package org.sphx.api;
@@ -71,5 +71,5 @@ public class SphinxResult
 }
 
 /*
- * $Id: SphinxResult.java 1172 2008-02-24 13:50:48Z shodan $
+ * $Id$
  */

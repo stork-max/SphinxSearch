@@ -6,7 +6,7 @@ SRC_SPHINX = sphinx.cpp sphinxexcerpt.cpp sphinxquery.cpp \
 noinst_LIBRARIES = libsphinx.a
 libsphinx_a_SOURCES = $(SRC_SPHINX)
 
-bin_PROGRAMS = indexer searchd spelldump indextool wordbreaker mkdict
+bin_PROGRAMS = indexer searchd spelldump indextool wordbreaker
 noinst_PROGRAMS = tests
 
 indexer_SOURCES = indexer.cpp
@@ -20,7 +20,7 @@ mkdict_SOURCES = mkdict.cpp
 BUILT_SOURCES = extract-version
 .PHONY: extract-version
 extract-version:
-	/bin/sh svnxrev.sh ..
+	/bin/sh git_commit_id.sh
 
 if USE_RLP
 RLP_LIBS = -L$(top_srcdir)/rlp/lib/amd64-glibc25-gcc42 -lbtrlpc -lbtrlpcore -lbtutils

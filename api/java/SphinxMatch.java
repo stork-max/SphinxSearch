@@ -1,5 +1,5 @@
 /*
- * $Id: SphinxMatch.java 1172 2008-02-24 13:50:48Z shodan $
+ * $Id$
  */
 
 package org.sphx.api;
@@ -31,5 +31,5 @@ public class SphinxMatch
 }
 
 /*
- * $Id: SphinxMatch.java 1172 2008-02-24 13:50:48Z shodan $
+ * $Id$
  */

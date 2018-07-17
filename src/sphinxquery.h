@@ -1,10 +1,10 @@
 //
-// $Id: sphinxquery.h 4649 2014-04-07 20:12:49Z kevg $
+// $Id$
 //
 
 //
-// Copyright (c) 2001-2014, Andrew Aksyonoff
-// Copyright (c) 2008-2014, Sphinx Technologies Inc
+// Copyright (c) 2001-2015, Andrew Aksyonoff
+// Copyright (c) 2008-2015, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -25,6 +25,7 @@ struct XQKeyword_t
 {
 	CSphString			m_sWord;
 	int					m_iAtomPos;
+	int					m_iSkippedBefore; ///< positions skipped before this token (because of blended chars)
 	bool				m_bFieldStart;	///< must occur at very start
 	bool				m_bFieldEnd;	///< must occur at very end
 	float				m_fBoost;		///< keyword IDF will be multiplied by this
@@ -35,6 +36,7 @@ struct XQKeyword_t
 
 	XQKeyword_t ()
 		: m_iAtomPos ( -1 )
+		, m_iSkippedBefore ( 0 )
 		, m_bFieldStart ( false )
 		, m_bFieldEnd ( false )
 		, m_fBoost ( 1.0f )
@@ -47,6 +49,7 @@ struct XQKeyword_t
 	XQKeyword_t ( const char * sWord, int iPos )
 		: m_sWord ( sWord )
 		, m_iAtomPos ( iPos )
+		, m_iSkippedBefore ( 0 )
 		, m_bFieldStart ( false )
 		, m_bFieldEnd ( false )
 		, m_fBoost ( 1.0f )
@@ -211,9 +214,6 @@ public:
 		m_iOrder = iOrder;
 	}
 
-	/// precise comparison
-	bool IsEqualTo ( const XQNode_t * pNode );
-
 	/// hash me
 	uint64_t GetHash () const;
 
@@ -238,6 +238,11 @@ public:
 	{
 		m_eOp = eOp;
 	}
+
+	/// fixup atom positions in case of proximity queries and blended chars
+	/// we need to handle tokens with blended characters as simple tokens in this case
+	/// and we need to remove possible gaps in atom positions
+	int FixupAtomPos();
 
 	/// return node like current
 	inline XQNode_t * Clone ();
@@ -316,5 +321,5 @@ int		sphMarkCommonSubtrees ( int iXQ, const XQQuery_t * pXQ );
 #endif // _sphinxquery_
 
 //
-// $Id: sphinxquery.h 4649 2014-04-07 20:12:49Z kevg $
+// $Id$
 //

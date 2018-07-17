@@ -1,10 +1,10 @@
 //
-// $Id: sphinxfilter.cpp 4587 2014-02-27 13:33:51Z tomat $
+// $Id$
 //
 
 //
-// Copyright (c) 2001-2014, Andrew Aksyonoff
-// Copyright (c) 2008-2014, Sphinx Technologies Inc
+// Copyright (c) 2001-2015, Andrew Aksyonoff
+// Copyright (c) 2008-2015, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -33,7 +33,7 @@ struct IFilter_Attr: virtual ISphFilter
 };
 
 /// values
-struct IFilter_Values: virtual ISphFilter
+struct IFilter_Values : virtual ISphFilter
 {
 	const SphAttr_t *	m_pValues;
 	int					m_iValueCount;
@@ -130,21 +130,24 @@ struct IFilter_Range: virtual ISphFilter
 struct IFilter_MVA: virtual IFilter_Attr
 {
 	const DWORD *	m_pMvaStorage;
+	bool			m_bArenaProhibit;
 
 	IFilter_MVA ()
 		: m_pMvaStorage ( NULL )
+		, m_bArenaProhibit ( false )
 	{}
 
-	virtual void SetMVAStorage ( const DWORD * pMva )
+	virtual void SetMVAStorage ( const DWORD * pMva, bool bArenaProhibit )
 	{
 		m_pMvaStorage = pMva;
+		m_bArenaProhibit = bArenaProhibit;
 	}
 
 	inline bool LoadMVA ( const CSphMatch & tMatch, const DWORD ** pMva, const DWORD ** pMvaMax ) const
 	{
 		assert ( m_pMvaStorage );
 
-		*pMva = tMatch.GetAttrMVA ( m_tLocator, m_pMvaStorage );
+		*pMva = tMatch.GetAttrMVA ( m_tLocator, m_pMvaStorage, m_bArenaProhibit );
 		if ( !*pMva )
 			return false;
 
@@ -513,16 +516,18 @@ class FilterString_c : public IFilter_Attr
 {
 private:
 	CSphFixedVector<BYTE>	m_dVal;
+	bool					m_bEq;
+
+protected:
 	SphStringCmp_fn			m_fnStrCmp;
 	const BYTE *			m_pStringBase;
 	bool					m_bPacked;
-	bool					m_bEq;
 
 public:
 	FilterString_c ( ESphCollation eCollation, ESphAttr eType, bool bEq )
 		: m_dVal ( 0 )
-		, m_pStringBase ( NULL )
 		, m_bEq ( bEq )
+		, m_pStringBase ( NULL )
 	{
 		assert ( eType==SPH_ATTR_STRING || eType==SPH_ATTR_STRINGPTR );
 		m_bPacked = ( eType==SPH_ATTR_STRING );
@@ -571,20 +576,84 @@ public:
 			return !m_bEq;
 
 		SphAttr_t uVal = tMatch.GetAttr ( m_tLocator );
-		if ( !uVal )
-			return !m_bEq;
 
-		const BYTE * pStr = NULL;
-		if ( m_bPacked )
-		{
+		const BYTE * pStr;
+		if ( !uVal )
+			pStr = (const BYTE*)"\0"; // 2 bytes, for packed strings
+		else if ( m_bPacked )
 			pStr = m_pStringBase + uVal;
-		} else
-		{
+		else
 			pStr = (const BYTE *)uVal;
-		}
 
 		bool bEq = ( m_fnStrCmp ( pStr, m_dVal.Begin(), m_bPacked )==0 );
 		return ( m_bEq==bEq );
+	}
+};
+
+
+struct Filter_StringValues_c: FilterString_c
+{
+	CSphString				m_sRefString;
+	CSphVector<BYTE>		m_dVal;
+	CSphVector<int>			m_dOfs;
+
+	Filter_StringValues_c ( ESphCollation eCollation, ESphAttr eType )
+		: FilterString_c ( eCollation, eType, false )
+	{}
+
+	virtual void SetValues ( const SphAttr_t * pStorage, int iCount )
+	{
+		assert ( pStorage );
+		assert ( iCount > 0 );
+
+		int iOfs = 0;
+		for ( int i=0; i<iCount; i++ )
+		{
+			SphAttr_t uVal = pStorage[i];
+
+			CSphString sRef;
+			SqlUnescape ( sRef, m_sRefString.cstr() + ( uVal>>32 ), uVal & 0xffffffff );
+			int iLen = sRef.Length();
+
+			if ( m_bPacked )
+			{
+				m_dVal.Resize ( iOfs+iLen+4 );
+				int iPacked = sphPackStrlen ( m_dVal.Begin() + iOfs, iLen );
+				memcpy ( m_dVal.Begin() + iOfs + iPacked, sRef.cstr(), iLen );
+			} else
+			{
+				m_dVal.Resize ( iOfs+iLen+1 );
+				memcpy ( m_dVal.Begin() + iOfs, sRef.cstr(), iLen );
+				m_dVal[iOfs+iLen] = '\0';
+			}
+
+			m_dOfs.Add ( iOfs );
+			iOfs = m_dVal.GetLength();
+		}
+	}
+
+	virtual void SetRefString ( const CSphString & sRef )
+	{
+		m_sRefString = sRef;
+	}
+
+	virtual bool Eval ( const CSphMatch & tMatch ) const
+	{
+		SphAttr_t uVal = tMatch.GetAttr ( m_tLocator );
+
+		const BYTE * pStr;
+		if ( !uVal )
+			pStr = (const BYTE*)"\0";
+		else if ( m_bPacked )
+			pStr = m_pStringBase + uVal;
+		else
+			pStr = (const BYTE *)uVal;
+
+		ARRAY_FOREACH ( i, m_dOfs )
+			if ( m_fnStrCmp ( pStr, m_dVal.Begin() + m_dOfs[i], m_bPacked )==0 )
+				return true;
+
+		return false;
 	}
 };
 
@@ -624,10 +693,10 @@ struct Filter_And2 : public ISphFilter
 		return this;
 	}
 
-	virtual void SetMVAStorage ( const DWORD * pMva )
+	virtual void SetMVAStorage ( const DWORD * pMva, bool bArenaProhibit )
 	{
-		m_pArg1->SetMVAStorage ( pMva );
-		m_pArg2->SetMVAStorage ( pMva );
+		m_pArg1->SetMVAStorage ( pMva, bArenaProhibit );
+		m_pArg2->SetMVAStorage ( pMva, bArenaProhibit );
 	}
 
 	virtual void SetStringStorage ( const BYTE * pStrings )
@@ -676,11 +745,11 @@ struct Filter_And3 : public ISphFilter
 		return this;
 	}
 
-	virtual void SetMVAStorage ( const DWORD * pMva )
+	virtual void SetMVAStorage ( const DWORD * pMva, bool bArenaProhibit )
 	{
-		m_pArg1->SetMVAStorage ( pMva );
-		m_pArg2->SetMVAStorage ( pMva );
-		m_pArg3->SetMVAStorage ( pMva );
+		m_pArg1->SetMVAStorage ( pMva, bArenaProhibit );
+		m_pArg2->SetMVAStorage ( pMva, bArenaProhibit );
+		m_pArg3->SetMVAStorage ( pMva, bArenaProhibit );
 	}
 
 	virtual void SetStringStorage ( const BYTE * pStrings )
@@ -736,10 +805,10 @@ struct Filter_And: public ISphFilter
 	}
 
 
-	virtual void SetMVAStorage ( const DWORD * pMva )
+	virtual void SetMVAStorage ( const DWORD * pMva, bool bArenaProhibit )
 	{
 		ARRAY_FOREACH ( i, m_dFilters )
-			m_dFilters[i]->SetMVAStorage ( pMva );
+			m_dFilters[i]->SetMVAStorage ( pMva, bArenaProhibit );
 	}
 
 	virtual void SetStringStorage ( const BYTE * pStrings )
@@ -798,9 +867,9 @@ struct Filter_Not: public ISphFilter
 		return true;
 	}
 
-	virtual void SetMVAStorage ( const DWORD * pMva )
+	virtual void SetMVAStorage ( const DWORD * pMva, bool bArenaProhibit )
 	{
-		m_pFilter->SetMVAStorage ( pMva );
+		m_pFilter->SetMVAStorage ( pMva, bArenaProhibit );
 	}
 
 	virtual void SetStringStorage ( const BYTE * pStrings )
@@ -823,42 +892,6 @@ ISphFilter * ISphFilter::Join ( ISphFilter * pFilter )
 
 /// helper functions
 
-static ISphFilter * CreateSpecialFilter ( const CSphString & sName, ESphFilter eFilterType, bool bHasEqual )
-{
-	if ( sName=="@id" )
-	{
-		switch ( eFilterType )
-		{
-			case SPH_FILTER_VALUES:	return new Filter_IdValues;
-			case SPH_FILTER_RANGE:
-				if ( bHasEqual )
-					return new Filter_IdRange<true>;
-				else
-					return new Filter_IdRange<false>;
-			default:
-				assert ( 0 && "invalid filter on @id" );
-				return NULL;
-		}
-	} else if ( sName=="@weight" )
-	{
-		switch ( eFilterType )
-		{
-			case SPH_FILTER_VALUES:	return new Filter_WeightValues;
-			case SPH_FILTER_RANGE:
-				if ( bHasEqual )
-					return new Filter_WeightRange<true>;
-				else
-					return new Filter_WeightRange<false>;
-			default:
-				assert ( 0 && "invalid filter on @weight" );
-				return NULL;
-		}
-	}
-
-	return NULL;
-}
-
-
 static inline ISphFilter * ReportError ( CSphString & sError, const char * sMessage, ESphFilter eFilterType )
 {
 	CSphString sFilterName;
@@ -873,6 +906,40 @@ static inline ISphFilter * ReportError ( CSphString & sError, const char * sMess
 	}
 
 	sError.SetSprintf ( sMessage, sFilterName.cstr() );
+	return NULL;
+}
+
+
+static ISphFilter * CreateSpecialFilter ( const CSphString & sName, ESphFilter eFilterType, bool bHasEqual, CSphString & sError )
+{
+	if ( sName=="@id" )
+	{
+		switch ( eFilterType )
+		{
+		case SPH_FILTER_VALUES:	return new Filter_IdValues;
+		case SPH_FILTER_RANGE:
+			if ( bHasEqual )
+				return new Filter_IdRange<true>;
+			else
+				return new Filter_IdRange<false>;
+		default:
+			return ReportError ( sError, "unsupported filter type '%s' on @id", eFilterType );
+		}
+	} else if ( sName=="@weight" )
+	{
+		switch ( eFilterType )
+		{
+		case SPH_FILTER_VALUES:	return new Filter_WeightValues;
+		case SPH_FILTER_RANGE:
+			if ( bHasEqual )
+				return new Filter_WeightRange<true>;
+			else
+				return new Filter_WeightRange<false>;
+		default:
+			return ReportError ( sError, "unsupported filter type '%s' on @weight", eFilterType );
+		}
+	}
+
 	return NULL;
 }
 
@@ -924,7 +991,12 @@ static ISphFilter * CreateFilter ( ESphAttr eAttrType, ESphFilter eFilterType, i
 	}
 
 	if ( eAttrType==SPH_ATTR_STRING || eAttrType==SPH_ATTR_STRINGPTR )
-		return new FilterString_c ( eCollation, eAttrType, bHasEqual );
+	{
+		if ( eFilterType==SPH_FILTER_VALUES )
+			return new Filter_StringValues_c ( eCollation, eAttrType );
+		else
+			return new FilterString_c ( eCollation, eAttrType, bHasEqual );
+        }
 
 	// non-float, non-MVA
 	switch ( eFilterType )
@@ -1208,11 +1280,72 @@ static ISphFilter * CreateFilterJson ( const CSphColumnInfo * DEBUGARG(pAttr), I
 }
 
 //////////////////////////////////////////////////////////////////////////
+// KillList STUFF
+//////////////////////////////////////////////////////////////////////////
+
+static int g_iKillMerge = 128;
+
+struct Filter_KillList : public ISphFilter
+{
+	KillListVector			m_dExt;
+	CSphVector<SphDocID_t>	m_dMerged;
+
+	explicit Filter_KillList ( const KillListVector & dKillList )
+	{
+		m_bUsesAttrs = false;
+		m_dExt = dKillList;
+
+		int iMerged = 0;
+		if ( m_dExt.GetLength()>1 )
+		{
+			ARRAY_FOREACH ( i, m_dExt )
+			{
+				iMerged += ( m_dExt[i].m_iLen<=g_iKillMerge ? m_dExt[i].m_iLen : 0 );
+			}
+			if ( iMerged>0 )
+			{
+				m_dMerged.Reserve ( iMerged );
+				ARRAY_FOREACH ( i, m_dExt )
+				{
+					if ( m_dExt[i].m_iLen>g_iKillMerge )
+						continue;
+
+					int iOff = m_dMerged.GetLength();
+					m_dMerged.Resize ( iOff + m_dExt[i].m_iLen );
+					memcpy ( m_dMerged.Begin()+iOff, m_dExt[i].m_pBegin, sizeof ( m_dMerged[0] ) * m_dExt[i].m_iLen );
+					m_dExt.RemoveFast ( i );
+					i--;
+				}
+			}
+			m_dMerged.Uniq();
+		}
+	}
+
+	virtual bool Eval ( const CSphMatch & tMatch ) const
+	{
+		if ( !m_dMerged.GetLength() && !m_dExt.GetLength() )
+			return true;
+
+		if ( m_dMerged.BinarySearch ( tMatch.m_uDocID )!=NULL )
+			return false;
+
+		ARRAY_FOREACH ( i, m_dExt )
+		{
+			if ( sphBinarySearch ( m_dExt[i].m_pBegin, m_dExt[i].m_pBegin + m_dExt[i].m_iLen - 1, tMatch.m_uDocID )!=NULL )
+				return false;
+		}
+
+		return true;
+	}
+};
+
+
+//////////////////////////////////////////////////////////////////////////
 // PUBLIC FACING INTERFACE
 //////////////////////////////////////////////////////////////////////////
 
 static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const CSphString & sAttrName, const ISphSchema & tSchema, const DWORD * pMvaPool, const BYTE * pStrings,
-									CSphString & sError, bool bHaving, ESphCollation eCollation )
+									CSphString & sError, bool bHaving, ESphCollation eCollation, bool bArenaProhibit )
 {
 	ISphFilter * pFilter = NULL;
 	const CSphColumnInfo * pAttr = NULL;
@@ -1226,7 +1359,9 @@ static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const C
 
 	if ( sAttrName.Begins("@") )
 	{
-		pFilter = CreateSpecialFilter ( sAttrName, tSettings.m_eType, tSettings.m_bHasEqual );
+		pFilter = CreateSpecialFilter ( sAttrName, tSettings.m_eType, tSettings.m_bHasEqual, sError );
+		if ( !pFilter && !sError.IsEmpty() )
+			return NULL;
 	}
 
 	// try to create a filter on a JSON attribute
@@ -1248,7 +1383,7 @@ static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const C
 
 		// fastpath for simple cases like j.key1 is handled in the expression
 		// combined access/filter nodes are only marginally faster (eg 17.4 msec vs 18.5 msec on 457K rows)
-		ISphExpr * pExpr = sphExprParse ( sAttrName.cstr(), tSchema, NULL, NULL, sError, NULL );
+		ISphExpr * pExpr = sphExprParse ( sAttrName.cstr(), tSchema, NULL, NULL, sError, NULL, eCollation );
 		pFilter = CreateFilterJson ( pAttr, pExpr, tSettings.m_eType, tSettings.m_bHasEqual, sError, eCollation );
 
 		if ( !pFilter )
@@ -1256,6 +1391,10 @@ static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const C
 	}
 
 	// try to lookup a regular attribute
+	ESphFilter eType = tSettings.m_eType;
+	float fMin = tSettings.m_fMinValue;
+	float fMax = tSettings.m_fMaxValue;
+
 	if ( !pFilter )
 	{
 		const int iAttr = tSchema.GetAttrIndex ( sAttrName.cstr() );
@@ -1278,7 +1417,16 @@ static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const C
 					pAttr->m_pExpr->AddRef(); // CreateFilterJson() uses a refcounted pointer, but does not AddRef() itself, so help it
 				pFilter = CreateFilterJson ( pAttr, pAttr->m_pExpr.Ptr(), tSettings.m_eType, tSettings.m_bHasEqual, sError, eCollation );
 			} else
-				pFilter = CreateFilter ( pAttr->m_eAttrType, tSettings.m_eType, tSettings.GetNumValues(), pAttr->m_tLocator, sError, tSettings.m_bHasEqual, eCollation );
+			{
+				// fixup "fltcol=intval" conditions
+				if ( pAttr->m_eAttrType==SPH_ATTR_FLOAT && tSettings.m_eType==SPH_FILTER_VALUES && tSettings.GetNumValues()==1 )
+				{
+					eType = SPH_FILTER_FLOATRANGE;
+					fMin = fMax = (float)tSettings.GetValue(0);
+				}
+
+				pFilter = CreateFilter ( pAttr->m_eAttrType, eType, tSettings.GetNumValues(), pAttr->m_tLocator, sError, tSettings.m_bHasEqual, eCollation );
+			}
 		}
 	}
 
@@ -1288,12 +1436,12 @@ static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const C
 		if ( pAttr )
 			pFilter->SetLocator ( pAttr->m_tLocator );
 
-		pFilter->SetMVAStorage ( pMvaPool );
+		pFilter->SetMVAStorage ( pMvaPool, bArenaProhibit );
 		pFilter->SetStringStorage ( pStrings );
 
 		pFilter->SetRange ( tSettings.m_iMinValue, tSettings.m_iMaxValue );
-		if ( tSettings.m_eType==SPH_FILTER_FLOATRANGE )
-			pFilter->SetRangeFloat ( tSettings.m_fMinValue, tSettings.m_fMaxValue );
+		if ( eType==SPH_FILTER_FLOATRANGE )
+			pFilter->SetRangeFloat ( fMin, fMax );
 		else
 			pFilter->SetRangeFloat ( (float)tSettings.m_iMinValue, (float)tSettings.m_iMaxValue );
 
@@ -1318,18 +1466,22 @@ static ISphFilter * CreateFilter ( const CSphFilterSettings & tSettings, const C
 }
 
 
-ISphFilter * sphCreateFilter ( const CSphFilterSettings & tSettings, const ISphSchema & tSchema, const DWORD * pMvaPool, const BYTE * pStrings, CSphString & sError, ESphCollation eCollation )
+ISphFilter * sphCreateFilter ( const CSphFilterSettings & tSettings, const ISphSchema & tSchema, const DWORD * pMvaPool, const BYTE * pStrings, CSphString & sError, ESphCollation eCollation, bool bArenaProhibit )
 {
-	return CreateFilter ( tSettings, tSettings.m_sAttrName, tSchema, pMvaPool, pStrings, sError, false, eCollation );
+	return CreateFilter ( tSettings, tSettings.m_sAttrName, tSchema, pMvaPool, pStrings, sError, false, eCollation, bArenaProhibit );
 }
 
 
 ISphFilter * sphCreateAggrFilter ( const CSphFilterSettings * pSettings, const CSphString & sAttrName, const ISphSchema & tSchema, CSphString & sError )
 {
 	assert ( pSettings );
-	return CreateFilter ( *pSettings, sAttrName, tSchema, NULL, NULL, sError, true, SPH_COLLATION_DEFAULT );
+	return CreateFilter ( *pSettings, sAttrName, tSchema, NULL, NULL, sError, true, SPH_COLLATION_DEFAULT, false );
 }
 
+ISphFilter * sphCreateFilter ( const KillListVector & dKillList )
+{
+	return new Filter_KillList ( dKillList );
+}
 
 ISphFilter * sphJoinFilters ( ISphFilter * pA, ISphFilter * pB )
 {
@@ -1339,5 +1491,5 @@ ISphFilter * sphJoinFilters ( ISphFilter * pA, ISphFilter * pB )
 }
 
 //
-// $Id: sphinxfilter.cpp 4587 2014-02-27 13:33:51Z tomat $
+// $Id$
 //

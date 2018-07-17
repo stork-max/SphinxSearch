@@ -1,10 +1,10 @@
 //
-// $Id: sphinxutils.cpp 4665 2014-04-20 05:08:07Z kevg $
+// $Id$
 //
 
 //
-// Copyright (c) 2001-2014, Andrew Aksyonoff
-// Copyright (c) 2008-2014, Sphinx Technologies Inc
+// Copyright (c) 2001-2015, Andrew Aksyonoff
+// Copyright (c) 2008-2015, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -406,7 +406,7 @@ static KeyDesc_t g_dKeysIndex[] =
 	{ "embedded_limit",			0, NULL },
 	{ "min_word_len",			0, NULL },
 	{ "charset_type",			KEY_REMOVED, NULL },
-    { "chinese_dictionary",                 0, NULL },
+	{ "chinese_dictionary",     0, NULL },
 	{ "charset_table",			0, NULL },
 	{ "ignore_chars",			0, NULL },
 	{ "min_prefix_len",			0, NULL },
@@ -545,6 +545,10 @@ static KeyDesc_t g_dKeysSearchd[] =
 	{ "ondisk_attrs_default",	0, NULL },
 	{ "shutdown_timeout",		0, NULL },
 	{ "query_log_min_msec",		0, NULL },
+	{ "agent_connect_timeout",	0, NULL },
+	{ "agent_query_timeout",	0, NULL },
+	{ "agent_retry_delay",		0, NULL },
+	{ "agent_retry_count",		0, NULL },
 	{ NULL,						0, NULL }
 };
 
@@ -563,6 +567,23 @@ static KeyDesc_t g_dKeysCommon[] =
 	{ NULL,						0, NULL }
 };
 
+struct KeySection_t
+{
+	const char *		m_sKey;		///< key name
+	KeyDesc_t *			m_pSection; ///< section to refer
+	bool				m_bNamed; ///< true if section is named. false if plain
+};
+
+static KeySection_t g_dConfigSections[] =
+{
+	{ "source",		g_dKeysSource,	true },
+	{ "index",		g_dKeysIndex,	true },
+	{ "indexer",	g_dKeysIndexer,	false },
+	{ "searchd",	g_dKeysSearchd,	false },
+	{ "common",		g_dKeysCommon,	false },
+	{ NULL,			NULL,			false }
+};
+
 //////////////////////////////////////////////////////////////////////////
 
 CSphConfigParser::CSphConfigParser ()
@@ -571,24 +592,23 @@ CSphConfigParser::CSphConfigParser ()
 {
 }
 
-
 bool CSphConfigParser::IsPlainSection ( const char * sKey )
 {
-	if ( !strcasecmp ( sKey, "indexer" ) )		return true;
-	if ( !strcasecmp ( sKey, "searchd" ) )		return true;
-	if ( !strcasecmp ( sKey, "search" ) )		return true;
-	if ( !strcasecmp ( sKey, "common" ) )		return true;
-	return false;
+	assert ( sKey );
+	const KeySection_t * pSection = g_dConfigSections;
+	while ( pSection->m_sKey && strcasecmp ( sKey, pSection->m_sKey ) )
+		++pSection;
+	return pSection->m_sKey && !pSection->m_bNamed;
 }
-
 
 bool CSphConfigParser::IsNamedSection ( const char * sKey )
 {
-	if ( !strcasecmp ( sKey, "source" ) )		return true;
-	if ( !strcasecmp ( sKey, "index" ) )		return true;
-	return false;
+	assert ( sKey );
+	const KeySection_t * pSection = g_dConfigSections;
+	while ( pSection->m_sKey && strcasecmp ( sKey, pSection->m_sKey ) )
+		++pSection;
+	return pSection->m_sKey && pSection->m_bNamed;
 }
-
 
 bool CSphConfigParser::AddSection ( const char * sType, const char * sName )
 {
@@ -648,12 +668,13 @@ bool CSphConfigParser::ValidateKey ( const char * sKey )
 {
 	// get proper descriptor table
 	// OPTIMIZE! move lookup to AddSection
+	const KeySection_t * pSection = g_dConfigSections;
 	const KeyDesc_t * pDesc = NULL;
-	if ( m_sSectionType=="source" )			pDesc = g_dKeysSource;
-	else if ( m_sSectionType=="index" )		pDesc = g_dKeysIndex;
-	else if ( m_sSectionType=="indexer" )	pDesc = g_dKeysIndexer;
-	else if ( m_sSectionType=="searchd" )	pDesc = g_dKeysSearchd;
-	else if ( m_sSectionType=="common" )	pDesc = g_dKeysCommon;
+	while ( pSection->m_sKey && m_sSectionType!=pSection->m_sKey )
+		++pSection;
+	if ( pSection->m_sKey )
+		pDesc = pSection->m_pSection;
+
 	if ( !pDesc )
 	{
 		snprintf ( m_sError, sizeof(m_sError), "unknown section type '%s'", m_sSectionType.cstr() );
@@ -812,10 +833,6 @@ bool TryToExec ( char * pBuffer, const char * szFilename, CSphVector<char> & dRe
 	return true;
 }
 
-bool CSphConfigParser::TryToExec ( char * pBuffer, const char * szFilename, CSphVector<char> & dResult )
-{
-	return ::TryToExec ( pBuffer, szFilename, dResult, m_sError, sizeof(m_sError) );
-}
 #endif
 
 
@@ -928,7 +945,7 @@ bool CSphConfigParser::Parse ( const char * sFileName, const char * pBuffer )
 				if ( !pBuffer && m_iLine==1 && p==sBuf && p[1]=='!' )
 				{
 					CSphVector<char> dResult;
-					if ( TryToExec ( p+2, sFileName, dResult ) )
+					if ( TryToExec ( p+2, sFileName, dResult, m_sError, sizeof(m_sError) ) )
 						Parse ( sFileName, &dResult[0] );
 					break;
 				} else
@@ -1117,10 +1134,8 @@ void sphConfTokenizer ( const CSphConfigSection & hIndex, CSphTokenizerSettings 
 {
 	tSettings.m_iNgramLen = Max ( hIndex.GetInt ( "ngram_len" ), 0 );
 
-    if(hIndex("chinese_dictionary")){
-        tSettings.m_iType = TOKENIZER_CHINESE;
-    }
-    else
+	tSettings.m_iType = hIndex("chinese_dictionary") ? TOKENIZER_CHINESE:( hIndex("ngram_chars") ? TOKENIZER_NGRAM : TOKENIZER_UTF8 );
+
 	if ( hIndex ( "ngram_chars" ) )
 	{
 		if ( tSettings.m_iNgramLen )
@@ -1132,7 +1147,7 @@ void sphConfTokenizer ( const CSphConfigSection & hIndex, CSphTokenizerSettings 
 	tSettings.m_sCaseFolding = hIndex.GetStr ( "charset_table" );
 	tSettings.m_iMinWordLen = Max ( hIndex.GetInt ( "min_word_len", 1 ), 1 );
 	tSettings.m_sNgramChars = hIndex.GetStr ( "ngram_chars" );
-    tSettings.m_sChineseDictionary  = hIndex.GetStr( "chinese_dictionary" );
+	tSettings.m_sChineseDictionary  = hIndex.GetStr( "chinese_dictionary" );
 	tSettings.m_sSynonymsFile = hIndex.GetStr ( "exceptions" ); // new option name
 	tSettings.m_sIgnoreChars = hIndex.GetStr ( "ignore_chars" );
 	tSettings.m_sBlendChars = hIndex.GetStr ( "blend_chars" );
@@ -1168,7 +1183,7 @@ void sphConfDictionary ( const CSphConfigSection & hIndex, CSphDictSettings & tS
 
 		CSphString sPath;
 		if ( sLastSlash )
-			sPath = pWordforms->SubString ( 0, sLastSlash - pWordforms->cstr() + 1 );
+			sPath = pWordforms->strval().SubString ( 0, sLastSlash - pWordforms->cstr() + 1 );
 
 		HANDLE hFind = FindFirstFile ( pWordforms->cstr(), &tFFData );
 		if ( hFind!=INVALID_HANDLE_VALUE )
@@ -1352,7 +1367,7 @@ bool sphConfIndex ( const CSphConfigSection & hIndex, CSphIndexSettings & tSetti
 			fprintf ( stdout, "WARNING: unknown docinfo=%s, defaulting to extern\n", hIndex["docinfo"].cstr() );
 
 		if ( tSettings.m_eDocinfo==SPH_DOCINFO_INLINE )
-			fprintf ( stdout, "WARNING: docinfo=inline is deprecated, use ondisc_attrs=1 instead\n" );
+			fprintf ( stdout, "WARNING: docinfo=inline is deprecated, use ondisk_attrs=1 instead\n" );
 
 		if ( tSettings.m_eDocinfo==SPH_DOCINFO_INLINE && tSettings.m_bIndexFieldLens )
 		{
@@ -1375,7 +1390,7 @@ bool sphConfIndex ( const CSphConfigSection & hIndex, CSphIndexSettings & tSetti
 	// hit-less indices
 	if ( hIndex("hitless_words") )
 	{
-		const CSphString & sValue = hIndex["hitless_words"];
+		const CSphString & sValue = hIndex["hitless_words"].strval();
 		if ( sValue=="all" )
 		{
 			tSettings.m_eHitless = SPH_HITLESS_ALL;
@@ -1394,7 +1409,7 @@ bool sphConfIndex ( const CSphConfigSection & hIndex, CSphIndexSettings & tSetti
 	tSettings.m_eBigramIndex = SPH_BIGRAM_NONE;
 	if ( hIndex("bigram_index") )
 	{
-		CSphString & s = hIndex["bigram_index"];
+		CSphString s = hIndex["bigram_index"].strval();
 		s.ToLower();
 		if ( s=="all" )
 			tSettings.m_eBigramIndex = SPH_BIGRAM_ALL;
@@ -2241,9 +2256,9 @@ void sphCheckDuplicatePaths ( const CSphConfig & hConf )
 		if ( hIndex ( "path" ) )
 		{
 			const CSphString & sIndex = hConf["index"].IterateGetKey ();
-			if ( hPaths ( hIndex["path"] ) )
-				sphDie ( "duplicate paths: index '%s' has the same path as '%s'.\n", sIndex.cstr(), hPaths[hIndex["path"]].cstr() );
-			hPaths.Add ( sIndex, hIndex["path"] );
+			if ( hPaths ( hIndex["path"].strval() ) )
+				sphDie ( "duplicate paths: index '%s' has the same path as '%s'.\n", sIndex.cstr(), hPaths[hIndex["path"].strval()].cstr() );
+			hPaths.Add ( sIndex, hIndex["path"].strval() );
 		}
 	}
 }
@@ -2268,7 +2283,7 @@ void sphConfigureCommon ( const CSphConfig & hConf )
 
 	if ( hCommon("on_json_attr_error") )
 	{
-		const CSphString & sVal = hCommon["on_json_attr_error"];
+		const CSphString & sVal = hCommon["on_json_attr_error"].strval();
 		if ( sVal=="ignore_attr" )
 			bJsonStrict = false;
 		else if ( sVal=="fail_index" )
@@ -2279,7 +2294,7 @@ void sphConfigureCommon ( const CSphConfig & hConf )
 
 	if ( hCommon("json_autoconv_keynames") )
 	{
-		const CSphString & sVal = hCommon["json_autoconv_keynames"];
+		const CSphString & sVal = hCommon["json_autoconv_keynames"].strval();
 		if ( sVal=="lowercase" )
 			bJsonKeynamesToLowercase = true;
 		else
@@ -2293,7 +2308,7 @@ void sphConfigureCommon ( const CSphConfig & hConf )
 		sphPluginInit ( hCommon["plugin_dir"].cstr() );
 }
 
-static bool IsChineseCode ( int iCode )
+bool sphIsChineseCode ( int iCode )
 {
 	return ( ( iCode>=0x2E80 && iCode<=0x2EF3 ) ||	// CJK radicals
 		( iCode>=0x2F00 && iCode<=0x2FD5 ) ||	// Kangxi radicals
@@ -2314,7 +2329,7 @@ bool sphDetectChinese ( const BYTE * szBuffer, int iLength )
 	while ( pBuffer<szBuffer+iLength )
 	{
 		int iCode = sphUTF8Decode ( pBuffer );
-		if ( IsChineseCode ( iCode ) )
+		if ( sphIsChineseCode ( iCode ) )
 			return true;
 	}
 
@@ -2429,5 +2444,5 @@ bool CSphDynamicLibrary::LoadSymbols ( const char **, void ***, int ) { return f
 #endif
 
 //
-// $Id: sphinxutils.cpp 4665 2014-04-20 05:08:07Z kevg $
+// $Id$
 //

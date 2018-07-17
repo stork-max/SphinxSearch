@@ -29,6 +29,7 @@
 %token	TOK_AS
 %token	TOK_ASC
 %token	TOK_ATTACH
+%token	TOK_ATTRIBUTES
 %token	TOK_AVG
 %token	TOK_BEGIN
 %token	TOK_BETWEEN
@@ -37,6 +38,7 @@
 %token	TOK_BY
 %token	TOK_CALL
 %token	TOK_CHARACTER
+%token	TOK_CHUNK
 %token	TOK_COLLATION
 %token	TOK_COLUMN
 %token	TOK_COMMIT
@@ -95,6 +97,7 @@
 %token	TOK_RAND
 %token	TOK_RAMCHUNK
 %token	TOK_READ
+%token	TOK_RECONFIGURE
 %token	TOK_REPEATABLE
 %token	TOK_REPLACE
 %token	TOK_REMAP
@@ -104,6 +107,7 @@
 %token	TOK_SELECT
 %token	TOK_SERIALIZABLE
 %token	TOK_SET
+%token	TOK_SETTINGS
 %token	TOK_SESSION
 %token	TOK_SHOW
 %token	TOK_SONAME
@@ -160,6 +164,8 @@ static void AddInsval ( SqlParser_c * pParser, CSphVector<SqlInsert_t> & dVec, c
 
 #define TRACK_BOUNDS(_res,_left,_right) \
 	_res = _left; \
+	if ( _res.m_iStart>0 && pParser->m_pBuf[_res.m_iStart-1]=='`' ) \
+		_res.m_iStart--; \
 	_res.m_iEnd = _right.m_iEnd; \
 	_res.m_iType = 0;
 
@@ -192,6 +198,7 @@ statement:
 	| attach_index
 	| flush_rtindex
 	| flush_ramchunk
+	| flush_index
 	| set_transaction
 	| select_sysvar
 	| select_dual
@@ -208,19 +215,30 @@ statement:
 //
 // FROM conflicts with select_expr opt_alias
 // NAMES, TRANSACTION conflicts with SET
+//
+// more known conflicts (but rather crappy ideas for a name anyway) are:
+// AND, AS, BY, DIV, FACET, FALSE, ID, IN, IS, LIMIT, MOD, NOT, NULL,
+// OR, ORDER, SELECT, TRUE
 
 ident_set:
 	TOK_IDENT
-	| TOK_AGENT | TOK_ATTACH | TOK_AVG | TOK_BEGIN | TOK_BOOL
-	| TOK_COLLATION | TOK_COUNT | TOK_FLUSH | TOK_FUNCTION
-	| TOK_GLOBAL | TOK_GROUP | TOK_GROUPBY | TOK_GROUP_CONCAT | TOK_ISOLATION
-	| TOK_LEVEL | TOK_LIKE | TOK_MATCH | TOK_MAX | TOK_META
-	| TOK_PLAN | TOK_PLUGIN | TOK_PLUGINS | TOK_PROFILE | TOK_RAMCHUNK | TOK_RAND | TOK_READ
-	| TOK_REPEATABLE | TOK_RETURNS | TOK_ROLLBACK | TOK_RTINDEX
-	| TOK_SERIALIZABLE | TOK_SESSION | TOK_START | TOK_STATUS | TOK_STRING
-	| TOK_SUM | TOK_TABLES | TOK_THREADS | TOK_TRUNCATE | TOK_TYPE | TOK_UNCOMMITTED
-	| TOK_VARIABLES | TOK_WARNINGS | TOK_WEIGHT | TOK_WITHIN
-	| TOK_JSON
+	| TOK_ADD | TOK_AGENT | TOK_ALTER | TOK_ASC | TOK_ATTACH | TOK_ATTRIBUTES
+	| TOK_AVG | TOK_BEGIN | TOK_BETWEEN | TOK_BIGINT | TOK_BOOL| TOK_CALL
+	| TOK_CHARACTER | TOK_CHUNK | TOK_COLLATION | TOK_COLUMN | TOK_COMMIT
+	| TOK_COMMITTED | TOK_COUNT | TOK_CREATE | TOK_DATABASES | TOK_DELETE
+	| TOK_DESC | TOK_DESCRIBE  | TOK_DISTINCT  | TOK_DOUBLE | TOK_DROP
+	| TOK_FLOAT | TOK_FLUSH | TOK_FOR| TOK_FUNCTION | TOK_GLOBAL | TOK_GROUP
+	| TOK_GROUP_CONCAT | TOK_GROUPBY | TOK_HAVING  | TOK_INDEX | TOK_INSERT
+	| TOK_INT | TOK_INTEGER | TOK_INTO | TOK_ISOLATION | TOK_JSON | TOK_LEVEL
+	| TOK_LIKE | TOK_MATCH | TOK_MAX | TOK_META | TOK_MIN | TOK_MULTI
+	| TOK_MULTI64 | TOK_OPTIMIZE | TOK_OPTION | TOK_PLAN | TOK_PLUGIN
+	| TOK_PLUGINS | TOK_PROFILE | TOK_RAMCHUNK | TOK_RAND | TOK_READ
+	| TOK_RECONFIGURE | TOK_REMAP | TOK_REPEATABLE | TOK_REPLACE | TOK_RETURNS
+	| TOK_ROLLBACK | TOK_RTINDEX | TOK_SERIALIZABLE | TOK_SESSION | TOK_SET
+	| TOK_SETTINGS | TOK_SHOW | TOK_SONAME | TOK_START | TOK_STATUS | TOK_STRING
+	| TOK_SUM | TOK_TABLE | TOK_TABLES | TOK_THREADS | TOK_TO | TOK_TRUNCATE
+	| TOK_TYPE | TOK_UNCOMMITTED | TOK_UPDATE | TOK_VALUES | TOK_VARIABLES
+	| TOK_WARNINGS | TOK_WEIGHT | TOK_WHERE | TOK_WITHIN
 	;
 
 ident:
@@ -405,15 +423,16 @@ filter_item:
 			pFilter->m_dValues.Add ( $3.m_iValue );
 			pFilter->m_bExclude = true;
 		}
-	| expr_ident TOK_IN '(' const_list ')'
+	| expr_ident TOK_IN '(' const_list_or_string_list ')'
 		{
 			CSphFilterSettings * pFilter = pParser->AddValuesFilter ( $1 );
 			if ( !pFilter )
 				YYERROR;
 			pFilter->m_dValues = *$4.m_pValues.Ptr();
 			pFilter->m_dValues.Uniq();
+			pFilter->m_sRefString = pParser->m_pBuf;
 		}
-	| expr_ident TOK_NOT TOK_IN '(' const_list ')'
+	| expr_ident TOK_NOT TOK_IN '(' const_list_or_string_list ')'
 		{
 			CSphFilterSettings * pFilter = pParser->AddValuesFilter ( $1 );
 			if ( !pFilter )
@@ -421,6 +440,7 @@ filter_item:
 			pFilter->m_dValues = *$5.m_pValues.Ptr();
 			pFilter->m_bExclude = true;
 			pFilter->m_dValues.Uniq();
+			pFilter->m_sRefString = pParser->m_pBuf;
 		}
 	| expr_ident TOK_IN TOK_USERVAR
 		{
@@ -462,10 +482,10 @@ filter_item:
 			if ( !pParser->AddFloatRangeFilter ( $1, $3.m_fValue, $3.m_fValue, true ) )
 				YYERROR;
 		}
-	| expr_float_unhandled
+	| expr_ident TOK_NE const_float
 		{
-			yyerror ( pParser, "NEQ filter on floats is not (yet?) supported" );
-			YYERROR;
+			if ( !pParser->AddFloatRangeFilter ( $1, $3.m_fValue, $3.m_fValue, true, true ) )
+				YYERROR;
 		}
 	| expr_ident TOK_BETWEEN const_float TOK_AND const_float
 		{
@@ -524,10 +544,6 @@ filter_item:
 		}
 	;
 
-expr_float_unhandled:
-	expr_ident TOK_NE const_float
-	;
-
 expr_ident:
 	ident
 	| TOK_ATIDENT
@@ -559,10 +575,10 @@ expr_ident:
 			if ( !pParser->SetNewSyntax() )
 				YYERROR;
 		}
-	| json_field
-	| TOK_INTEGER '(' json_field ')'
-	| TOK_DOUBLE '(' json_field ')'
-	| TOK_BIGINT '(' json_field ')'
+	| json_expr
+	| TOK_INTEGER '(' json_expr ')'
+	| TOK_DOUBLE '(' json_expr ')'
+	| TOK_BIGINT '(' json_expr ')'
 	| TOK_FACET '(' ')'
 	;
 
@@ -595,6 +611,24 @@ const_list:
 		{
 			$$.m_pValues->Add ( $3.m_iValue );
 		}
+	;
+
+string_list:
+	TOK_QUOTED_STRING
+		{
+			assert ( !$$.m_pValues.Ptr() );
+			$$.m_pValues = new RefcountedVector_c<SphAttr_t> ();
+			$$.m_pValues->Add ( $1.m_iValue );
+		}
+	| string_list ',' TOK_QUOTED_STRING
+		{
+			$$.m_pValues->Add ( $3.m_iValue );
+		}
+	;
+
+const_list_or_string_list:
+	const_list
+	| string_list
 	;
 
 opt_group_clause:
@@ -787,7 +821,7 @@ expr:
 	| '(' expr ')'				{ TRACK_BOUNDS ( $$, $1, $3 ); }
 	| '{' consthash '}'			{ TRACK_BOUNDS ( $$, $1, $3 ); }
 	| function
-	| json_field
+	| json_expr
 	| streq
 	| json_field TOK_IS TOK_NULL			{ TRACK_BOUNDS ( $$, $1, $3 ); }
 	| json_field TOK_IS TOK_NOT TOK_NULL	{ TRACK_BOUNDS ( $$, $1, $4 ); }
@@ -863,12 +897,35 @@ show_what:
 			pParser->m_pStmt->m_eStmt = STMT_SHOW_AGENT_STATUS;
 			pParser->ToString ( pParser->m_pStmt->m_sIndex, $2 );
 		}
-	| TOK_INDEX ident TOK_STATUS
+	| index_or_table ident TOK_STATUS
 		{
 			pParser->m_pStmt->m_eStmt = STMT_SHOW_INDEX_STATUS;
 			pParser->ToString ( pParser->m_pStmt->m_sIndex, $2 );
 		}
+	| index_or_table ident opt_chunk TOK_SETTINGS
+		{
+			pParser->m_pStmt->m_eStmt = STMT_SHOW_INDEX_SETTINGS;
+			pParser->ToString ( pParser->m_pStmt->m_sIndex, $2 );
+		}
+	| index_or_table ident TOK_DOT_NUMBER TOK_SETTINGS
+		{
+			pParser->m_pStmt->m_eStmt = STMT_SHOW_INDEX_SETTINGS;
+			pParser->ToString ( pParser->m_pStmt->m_sIndex, $2 );
+			pParser->m_pStmt->m_iIntParam = int($3.m_fValue*10);
+		}
 	;
+
+index_or_table:
+	TOK_INDEX
+	| TOK_TABLE
+	;
+
+opt_chunk:
+	// empty
+	| TOK_CHUNK TOK_CONST_INT
+		{
+			pParser->m_pStmt->m_iIntParam = $2.m_iValue;
+		};
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -1186,7 +1243,7 @@ update_item:
 			SqlNode_t tNoValues;
 			pParser->UpdateMVAAttr ( $1, tNoValues );
 		}
-	| json_field '=' const_int // duplicate ident code (avoiding s/r conflict)
+	| json_expr '=' const_int // duplicate ident code (avoiding s/r conflict)
 		{
 			// it is performance-critical to forcibly inline this
 			pParser->m_pStmt->m_tUpdate.m_dPool.Add ( (DWORD)$3.m_iValue );
@@ -1200,7 +1257,7 @@ update_item:
 				pParser->AddUpdatedAttr ( $1, SPH_ATTR_INTEGER );
 			}
 		}
-	| json_field '=' const_float
+	| json_expr '=' const_float
 		{
 			// it is performance-critical to forcibly inline this
 			pParser->m_pStmt->m_tUpdate.m_dPool.Add ( sphF2DW ( $3.m_fValue ) );
@@ -1219,6 +1276,7 @@ alter_col_type:
 	| TOK_MULTI64	{ $$.m_iValue = SPH_ATTR_INT64SET; }
 	| TOK_JSON		{ $$.m_iValue = SPH_ATTR_JSON; }
 	| TOK_STRING	{ $$.m_iValue = SPH_ATTR_STRING; }
+	| TOK_INT		{ $$.m_iValue = SPH_ATTR_INTEGER; }
 	;
 
 alter:
@@ -1236,6 +1294,12 @@ alter:
 			tStmt.m_eStmt = STMT_ALTER_DROP;
 			pParser->ToString ( tStmt.m_sIndex, $3 );
 			pParser->ToString ( tStmt.m_sAlterAttr, $6 );
+		}
+	| TOK_ALTER TOK_RTINDEX ident TOK_RECONFIGURE
+		{
+			SqlStmt_t & tStmt = *pParser->m_pStmt;
+			tStmt.m_eStmt = STMT_ALTER_RECONFIGURE;
+			pParser->ToString ( tStmt.m_sIndex, $3 );
 		}
 	;
 
@@ -1321,6 +1385,7 @@ udf_type:
 	| TOK_BIGINT	{ $$ = SPH_ATTR_BIGINT; }
 	| TOK_FLOAT		{ $$ = SPH_ATTR_FLOAT; }
 	| TOK_STRING	{ $$ = SPH_ATTR_STRINGPTR; }
+	| TOK_INTEGER	{ $$ = SPH_ATTR_INTEGER; }
 	;
 
 
@@ -1365,6 +1430,14 @@ flush_ramchunk:
 		}
 	;
 
+flush_index:
+	TOK_FLUSH TOK_ATTRIBUTES
+		{
+			SqlStmt_t & tStmt = *pParser->m_pStmt;
+			tStmt.m_eStmt = STMT_FLUSH_INDEX;
+		}
+	;
+	
 //////////////////////////////////////////////////////////////////////////
 
 select_sysvar:
@@ -1435,6 +1508,11 @@ drop_plugin:
 //////////////////////////////////////////////////////////////////////////
 
 json_field:
+	json_expr
+	| ident
+	;
+
+json_expr:
 	ident subscript				{ $$ = $1; $$.m_iEnd = $2.m_iEnd; }
 
 subscript:

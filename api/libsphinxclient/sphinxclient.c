@@ -1,10 +1,10 @@
 //
-// $Id: sphinxclient.c 4522 2014-01-30 11:00:18Z tomat $
+// $Id$
 //
 
 //
-// Copyright (c) 2001-2014, Andrew Aksyonoff
-// Copyright (c) 2008-2014, Sphinx Technologies Inc
+// Copyright (c) 2001-2015, Andrew Aksyonoff
+// Copyright (c) 2008-2015, Sphinx Technologies Inc
 // All rights reserved
 //
 // This program is free software; you can redistribute it and/or modify
@@ -335,7 +335,6 @@ void sphinx_cleanup ( sphinx_client * client )
 	sphinx_free_results ( client );
 	client->num_results = 0;
 
-	client->num_results = 0;
 	safe_free ( client->response_buf );
 }
 
@@ -510,7 +509,7 @@ sphinx_bool sphinx_set_limits ( sphinx_client * client, int offset, int limit, i
 
 	client->offset = offset;
 	client->limit = limit;
-	if ( max_matches>=0 )
+	if ( max_matches>0 )
 		client->max_matches = max_matches;
 	if ( cutoff>=0 )
 		client->cutoff = cutoff;
@@ -597,7 +596,7 @@ sphinx_bool sphinx_set_field_weights ( sphinx_client * client, int num_weights, 
 	{
 		if ( num_weights<=0 )		set_error ( client, "invalid arguments (num_weights must be > 0)" );
 		else if ( !field_names )	set_error ( client, "invalid arguments (field_names must not be NULL)" );
-		else if ( !field_names )	set_error ( client, "invalid arguments (field_weights must not be NULL)" );
+		else if ( !field_weights )	set_error ( client, "invalid arguments (field_weights must not be NULL)" );
 		else						set_error ( client, "invalid arguments" );
 		return SPH_FALSE;
 	}
@@ -630,7 +629,7 @@ sphinx_bool sphinx_set_index_weights ( sphinx_client * client, int num_weights, 
 	{
 		if ( num_weights<=0 )		set_error ( client, "invalid arguments (num_weights must be > 0)" );
 		else if ( !index_names )	set_error ( client, "invalid arguments (index_names must not be NULL)" );
-		else if ( !index_names )	set_error ( client, "invalid arguments (index_weights must not be NULL)" );
+		else if ( !index_weights )	set_error ( client, "invalid arguments (index_weights must not be NULL)" );
 		else						set_error ( client, "invalid arguments" );
 		return SPH_FALSE;
 	}
@@ -674,8 +673,8 @@ static struct st_filter * sphinx_add_filter_entry ( sphinx_client * client )
 	int len;
 	if ( client->num_filters>=client->max_filters )
 	{
-		len = ( client->max_filters<=0 ) ? client->num_filters + 8 : 2*client->max_filters;
-		len *= sizeof(struct st_filter);
+		client->max_filters = ( client->max_filters<=0 ) ? client->num_filters + 8 : 2*client->max_filters;
+		len = client->max_filters*sizeof(struct st_filter);
 		client->filters = realloc ( client->filters, len );
 		if ( !client->filters )
 		{
@@ -2672,5 +2671,5 @@ void sphinx_status_destroy ( char ** status, int num_rows, int num_cols )
 }
 
 //
-// $Id: sphinxclient.c 4522 2014-01-30 11:00:18Z tomat $
+// $Id$
 //

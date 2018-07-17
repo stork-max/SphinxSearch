@@ -1,5 +1,5 @@
 #
-# $Id: test2.py 489 2006-11-22 22:00:40Z shodan $
+# $Id$
 #
 
 from sphinxapi import *
@@ -23,5 +23,5 @@ else:
 		print 'n=%d, res=%s' % (n, entry)
 
 #
-# $Id: test2.py 489 2006-11-22 22:00:40Z shodan $
+# $Id$
 #

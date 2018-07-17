@@ -1,5 +1,5 @@
 //
-// $Id: sphinxstemar.cpp 4522 2014-01-30 11:00:18Z tomat $
+// $Id$
 //
 
 //
@@ -517,5 +517,5 @@ void stem_ar_utf8 ( BYTE * word )
 }
 
 //
-// $Id: sphinxstemar.cpp 4522 2014-01-30 11:00:18Z tomat $
+// $Id$
 //

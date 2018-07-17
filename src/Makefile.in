@@ -96,7 +96,7 @@ wordbreaker_DEPENDENCIES = $(am__DEPENDENCIES_2)
 am_mkdict_OBJECTS = mkdict.$(OBJEXT)
 mkdict_OBJECTS = $(am_mkdict_OBJECTS)
 mkdict_LDADD = $(LDADD)
-mkdict_DEPENDENCIES = $(am__DEPENDENCIES_2)
+mkdict_DEPENDENCIES = $(am__DEPENDENCIES_3)
 DEFAULT_INCLUDES = -I.@am__isrc@ -I$(top_builddir)/config
 depcomp = $(SHELL) $(top_srcdir)/config/depcomp
 am__depfiles_maybe = depfiles
@@ -112,10 +112,10 @@ CXXLINK = $(CXXLD) $(AM_CXXFLAGS) $(CXXFLAGS) $(AM_LDFLAGS) $(LDFLAGS) \
 	-o $@
 SOURCES = $(libsphinx_a_SOURCES) $(indexer_SOURCES) \
 	$(indextool_SOURCES) $(searchd_SOURCES) $(spelldump_SOURCES) \
-	$(tests_SOURCES) $(wordbreaker_SOURCES)  $(mkdict_SOURCES)
+	$(tests_SOURCES) $(wordbreaker_SOURCES) $(mkdict_SOURCES)
 DIST_SOURCES = $(libsphinx_a_SOURCES) $(indexer_SOURCES) \
 	$(indextool_SOURCES) $(searchd_SOURCES) $(spelldump_SOURCES) \
-	$(tests_SOURCES) $(wordbreaker_SOURCES)  $(mkdict_SOURCES)
+	$(tests_SOURCES) $(wordbreaker_SOURCES) $(mkdict_SOURCES)
 ETAGS = etags
 CTAGS = ctags
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
@@ -348,6 +348,7 @@ wordbreaker$(EXEEXT): $(wordbreaker_OBJECTS) $(wordbreaker_DEPENDENCIES) $(EXTRA
 mkdict$(EXEEXT): $(mkdict_OBJECTS) $(mkdict_DEPENDENCIES) 
 	@rm -f mkdict$(EXEEXT)
 	$(CXXLINK) $(mkdict_OBJECTS) $(mkdict_LDADD) $(LIBS)
+
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
@@ -619,7 +620,7 @@ uninstall-am: uninstall-binPROGRAMS
 
 .PHONY: extract-version
 extract-version:
-	/bin/sh svnxrev.sh ..
+	/bin/sh git_commit_id.sh
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

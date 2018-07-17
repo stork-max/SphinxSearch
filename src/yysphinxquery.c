@@ -1544,7 +1544,7 @@ yyreduce:
 
   case 26:
 
-    { (yyval.pNode) = (yyvsp[(2) - (5)].pNode); if ( (yyval.pNode) ) { assert ( (yyval.pNode)->m_dWords.GetLength() ); (yyval.pNode)->SetOp ( SPH_QUERY_PROXIMITY ); (yyval.pNode)->m_iOpArg = (yyvsp[(5) - (5)].tInt).iValue; } ;}
+    { (yyval.pNode) = (yyvsp[(2) - (5)].pNode); if ( (yyval.pNode) ) { assert ( (yyval.pNode)->m_dWords.GetLength() ); (yyval.pNode)->SetOp ( SPH_QUERY_PROXIMITY ); (yyval.pNode)->m_iOpArg = (yyvsp[(5) - (5)].tInt).iValue; pParser->m_iAtomPos = (yyval.pNode)->FixupAtomPos(); } ;}
     break;
 
   case 27:

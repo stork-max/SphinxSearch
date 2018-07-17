@@ -1,5 +1,5 @@
 /*
- * $Id: test.java 2876 2011-07-08 15:23:04Z tomat $
+ * $Id$
  */
 
 package org.sphx.api;
@@ -160,5 +160,5 @@ public class test
 }
 
 /*
- * $Id: test.java 2876 2011-07-08 15:23:04Z tomat $
+ * $Id$
  */

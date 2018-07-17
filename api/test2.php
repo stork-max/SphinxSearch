@@ -1,7 +1,7 @@
 <?php
 
 //
-// $Id: test2.php 910 2007-11-16 11:43:46Z shodan $
+// $Id$
 //
 
 require ( "sphinxapi.php" );
@@ -47,7 +47,7 @@ foreach ( array(0,1) as $exact )
 }
 
 //
-// $Id: test2.php 910 2007-11-16 11:43:46Z shodan $
+// $Id$
 //
 
 ?>

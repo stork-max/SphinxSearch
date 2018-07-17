@@ -1,7 +1,7 @@
 <?php
 
 //
-// $Id: test.php 4097 2013-08-20 09:28:24Z kevg $
+// $Id$
 //
 
 require ( "sphinxapi.php" );
@@ -162,7 +162,7 @@ if ( $res===false )
 }
 
 //
-// $Id: test.php 4097 2013-08-20 09:28:24Z kevg $
+// $Id$
 //
 
 ?>

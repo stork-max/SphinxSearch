@@ -1,5 +1,5 @@
 #
-# $Id: test.py 4097 2013-08-20 09:28:24Z kevg $
+# $Id$
 #
 
 from sphinxapi import *
@@ -119,5 +119,5 @@ if res.has_key('matches'):
 		n += 1
 
 #
-# $Id: test.py 4097 2013-08-20 09:28:24Z kevg $
+# $Id$
 #

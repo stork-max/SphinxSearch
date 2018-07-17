@@ -1,5 +1,5 @@
 #
-# $Id: html2txt.pl 4112 2013-08-25 11:40:40Z shodan $
+# $Id$
 #
 
 use Text::Wrap;
@@ -275,5 +275,5 @@ $res =~ s/$MAGIC_NBSP/ /g;
 print $res;
 
 #
-# $Id: html2txt.pl 4112 2013-08-25 11:40:40Z shodan $
+# $Id$
 #
