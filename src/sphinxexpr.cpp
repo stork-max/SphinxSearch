@@ -38,62 +38,148 @@ UservarIntSet_c * ( *g_pUservarsHook )( const CSphString & sUservar );
 // EVALUATION ENGINE
 //////////////////////////////////////////////////////////////////////////
 
-struct ExprLocatorTraits_t : public ISphExpr
+#if USE_WINDOWS
+	#ifndef NDEBUG
+		#define EXPR_CLASS_NAME(name) \
+			{\
+			const char * szFuncName = __FUNCTION__; \
+			const char * szClassNameEnd = strstr ( szFuncName, "::" ); \
+			assert ( szClassNameEnd ); \
+			const char * szTemplateNameEnd = strstr ( szFuncName, "<" ); \
+			if ( szTemplateNameEnd ) szClassNameEnd = szTemplateNameEnd; \
+			size_t iLen = szClassNameEnd-szFuncName; \
+			assert ( strlen(name)==iLen && "Wrong expression name specified in ::GetHash" ); \
+			assert ( !strncmp(name, szFuncName, iLen) && "Wrong expression name specified in ::GetHash" ); \
+			}\
+			const char * szClassName = name; \
+			uint64_t uHash = uPrevHash;
+	#else
+			#define EXPR_CLASS_NAME(name) \
+				const char * szClassName = name; \
+				uint64_t uHash = uPrevHash;
+	#endif
+#else
+	#define EXPR_CLASS_NAME(name) \
+		const char * szClassName = name; \
+		uint64_t uHash = uPrevHash;
+#endif
+
+#define EXPR_CLASS_NAME_NOCHECK(name) \
+	const char * szClassName = name; \
+	uint64_t uHash = uPrevHash;
+
+#define CALC_DEP_HASHES() sphCalcExprDepHash ( szClassName, this, tSorterSchema, uHash, bDisable );
+#define CALC_DEP_HASHES_EX(hash) sphCalcExprDepHash ( szClassName, this, tSorterSchema, uHash^hash, bDisable );
+#define CALC_PARENT_HASH() CalcHash ( szClassName, tSorterSchema, uHash, bDisable );
+#define CALC_PARENT_HASH_EX(hash) CalcHash ( szClassName, tSorterSchema, uHash^hash, bDisable );
+
+#define CALC_POD_HASH(value) uHash = sphFNV64 ( &value, sizeof(value), uHash );
+#define CALC_POD_HASHES(values) uHash = sphFNV64 ( values.Begin(), values.GetLength()*sizeof(values[0]), uHash );
+#define CALC_STR_HASH(str,len) uHash = sphFNV64 ( str.cstr(), len, uHash );
+#define CALC_CHILD_HASH(child) if (child) uHash = child->GetHash ( tSorterSchema, uHash, bDisable );
+#define CALC_CHILD_HASHES(children) ARRAY_FOREACH ( i, children ) if (children[i]) uHash = children[i]->GetHash ( tSorterSchema, uHash, bDisable );
+
+
+struct ExprLocatorTraits_t
 {
 	CSphAttrLocator m_tLocator;
 	int m_iLocator; // used by SPH_EXPR_GET_DEPENDENT_COLS
 
 	ExprLocatorTraits_t ( const CSphAttrLocator & tLocator, int iLocator ) : m_tLocator ( tLocator ), m_iLocator ( iLocator ) {}
 
-	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	void HandleCommand ( ESphExprCommand eCmd, void * pArg )
 	{
-		if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS )
+		if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS && m_iLocator!=-1 )
 			static_cast < CSphVector<int>* >(pArg)->Add ( m_iLocator );
 	}
 };
 
 
-struct Expr_GetInt_c : public ExprLocatorTraits_t
+struct Expr_WithLocator_c : public ISphExpr, public ExprLocatorTraits_t
 {
-	Expr_GetInt_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ) {}
+public:
+	Expr_WithLocator_c ( const CSphAttrLocator & tLocator, int iLocator )
+		: ExprLocatorTraits_t ( tLocator, iLocator )
+	{}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		HandleCommand ( eCmd, pArg );
+	}
+};
+
+
+struct Expr_GetInt_c : public Expr_WithLocator_c
+{
+	Expr_GetInt_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ) {}
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float) tMatch.GetAttr ( m_tLocator ); } // FIXME! OPTIMIZE!!! we can go the short route here
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)tMatch.GetAttr ( m_tLocator ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)tMatch.GetAttr ( m_tLocator ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetInt_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
-struct Expr_GetBits_c : public ExprLocatorTraits_t
+struct Expr_GetBits_c : public Expr_WithLocator_c
 {
-	Expr_GetBits_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ) {}
+	Expr_GetBits_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ) {}
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float) tMatch.GetAttr ( m_tLocator ); }
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)tMatch.GetAttr ( m_tLocator ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)tMatch.GetAttr ( m_tLocator ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetBits_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
-struct Expr_GetSint_c : public ExprLocatorTraits_t
+struct Expr_GetSint_c : public Expr_WithLocator_c
 {
-	Expr_GetSint_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ) {}
+	Expr_GetSint_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ) {}
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)(int)tMatch.GetAttr ( m_tLocator ); }
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)tMatch.GetAttr ( m_tLocator ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int)tMatch.GetAttr ( m_tLocator ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetSint_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
-struct Expr_GetFloat_c : public ExprLocatorTraits_t
+struct Expr_GetFloat_c : public Expr_WithLocator_c
 {
-	Expr_GetFloat_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ) {}
+	Expr_GetFloat_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ) {}
 	virtual float Eval ( const CSphMatch & tMatch ) const { return tMatch.GetAttrFloat ( m_tLocator ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetFloat_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
-struct Expr_GetString_c : public ExprLocatorTraits_t
+struct Expr_GetString_c : public Expr_WithLocator_c
 {
 	const BYTE * m_pStrings;
 
-	Expr_GetString_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ) {}
+	Expr_GetString_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ) {}
 	virtual float Eval ( const CSphMatch & ) const { assert ( 0 ); return 0; }
-	virtual void Command ( ESphExprCommand eCmd, void * pArg ) { if ( eCmd==SPH_EXPR_SET_STRING_POOL ) m_pStrings = (const BYTE*)pArg; }
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		Expr_WithLocator_c::Command ( eCmd, pArg );
+
+		if ( eCmd==SPH_EXPR_SET_STRING_POOL )
+			m_pStrings = (const BYTE*)pArg;
+	}
 
 	virtual int StringEval ( const CSphMatch & tMatch, const BYTE ** ppStr ) const
 	{
@@ -104,18 +190,26 @@ struct Expr_GetString_c : public ExprLocatorTraits_t
 		*ppStr = NULL;
 		return 0;
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetString_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
-struct Expr_GetMva_c : public ExprLocatorTraits_t
+struct Expr_GetMva_c : public Expr_WithLocator_c
 {
 	const DWORD * m_pMva;
 	bool m_bArenaProhibit;
 
-	Expr_GetMva_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ), m_pMva ( NULL ), m_bArenaProhibit ( false ) {}
+	Expr_GetMva_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ), m_pMva ( NULL ), m_bArenaProhibit ( false ) {}
 	virtual float Eval ( const CSphMatch & ) const { assert ( 0 ); return 0; }
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_WithLocator_c::Command ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_MVA_POOL )
 		{
 			const PoolPtrs_t * pPool = (const PoolPtrs_t *)pArg;
@@ -124,15 +218,28 @@ struct Expr_GetMva_c : public ExprLocatorTraits_t
 			m_bArenaProhibit = pPool->m_bArenaProhibit;
 		}
 	}
+	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)tMatch.GetAttr ( m_tLocator ); }
 	virtual const DWORD * MvaEval ( const CSphMatch & tMatch ) const { return tMatch.GetAttrMVA ( m_tLocator, m_pMva, m_bArenaProhibit ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetMva_c");
+		CALC_POD_HASH(m_bArenaProhibit);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
-struct Expr_GetFactorsAttr_c : public ExprLocatorTraits_t
+struct Expr_GetFactorsAttr_c : public Expr_WithLocator_c
 {
-	Expr_GetFactorsAttr_c ( const CSphAttrLocator & tLocator, int iLocator ) : ExprLocatorTraits_t ( tLocator, iLocator ) {}
+	Expr_GetFactorsAttr_c ( const CSphAttrLocator & tLocator, int iLocator ) : Expr_WithLocator_c ( tLocator, iLocator ) {}
 	virtual float Eval ( const CSphMatch & ) const { assert ( 0 ); return 0; }
 	virtual const DWORD * FactorEval ( const CSphMatch & tMatch ) const { return (DWORD *)tMatch.GetAttr ( m_tLocator ); }
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetFactorsAttr_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -144,6 +251,13 @@ struct Expr_GetConst_c : public ISphExpr
 	virtual int IntEval ( const CSphMatch & ) const { return (int)m_fValue; }
 	virtual int64_t Int64Eval ( const CSphMatch & ) const { return (int64_t)m_fValue; }
 	virtual bool IsConst () const { return true; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetConst_c");
+		CALC_POD_HASH(m_fValue);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -155,6 +269,13 @@ struct Expr_GetIntConst_c : public ISphExpr
 	virtual int IntEval ( const CSphMatch & ) const { return m_iValue; }
 	virtual int64_t Int64Eval ( const CSphMatch & ) const { return m_iValue; }
 	virtual bool IsConst () const { return true; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetIntConst_c");
+		CALC_POD_HASH(m_iValue);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -166,6 +287,13 @@ struct Expr_GetInt64Const_c : public ISphExpr
 	virtual int IntEval ( const CSphMatch & ) const { assert ( 0 ); return (int)m_iValue; }
 	virtual int64_t Int64Eval ( const CSphMatch & ) const { return m_iValue; }
 	virtual bool IsConst () const { return true; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetInt64Const_c");
+		CALC_POD_HASH(m_iValue);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -196,7 +324,47 @@ struct Expr_GetStrConst_c : public ISphStringExpr
 	virtual int IntEval ( const CSphMatch & ) const { assert ( 0 ); return 0; }
 	virtual int64_t Int64Eval ( const CSphMatch & ) const { assert ( 0 ); return 0; }
 	virtual bool IsConst () const { return true; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetStrConst_c");
+		CALC_STR_HASH(m_sVal, m_iLen);
+		return CALC_DEP_HASHES();
+	}
 };
+
+
+class Expr_StrLength_c : public ISphExpr
+{
+public:
+	Expr_StrLength_c ( ISphExpr * pArg )
+		: m_pArg ( pArg )
+	{}
+
+	virtual int IntEval ( const CSphMatch & tMatch ) const
+	{
+		const BYTE * pStr;		
+		return m_pArg->StringEval ( tMatch, &pStr );
+	}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		m_pArg->Command ( eCmd, pArg );
+	}
+
+	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_StrLength_c");
+		CALC_CHILD_HASH(m_pArg);
+		return CALC_DEP_HASHES();
+	}
+
+protected:
+	ISphExpr * m_pArg;
+};
+
 
 
 struct Expr_GetZonespanlist_c : public ISphStringExpr
@@ -235,6 +403,12 @@ struct Expr_GetZonespanlist_c : public ISphStringExpr
 	virtual bool IsStringPtr() const
 	{
 		return true;
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true; // disable caching for now, might add code to process if necessary
+		return 0;
 	}
 };
 
@@ -279,6 +453,12 @@ struct Expr_GetRankFactors_c : public ISphStringExpr
 	{
 		return true;
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true; // disable caching for now, might add code to process if necessary
+		return 0;
+	}
 };
 
 
@@ -321,6 +501,12 @@ struct Expr_GetPackedFactors_c : public ISphStringExpr
 	virtual bool IsStringPtr() const
 	{
 		return true;
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true; // disable caching for now, might add code to process if necessary
+		return 0;
 	}
 };
 
@@ -441,6 +627,12 @@ struct Expr_BM25F_c : public ISphExpr
 		}
 		m_fWeightedAvgDocLen /= m_tRankerState.m_iTotalDocuments;
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true; // disable caching for now, might add code to process if necessary
+		return 0;
+	}
 };
 
 
@@ -449,6 +641,12 @@ struct Expr_GetId_c : public ISphExpr
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)tMatch.m_uDocID; }
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)tMatch.m_uDocID; }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)tMatch.m_uDocID; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetId_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -457,6 +655,12 @@ struct Expr_GetWeight_c : public ISphExpr
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)tMatch.m_iWeight; }
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)tMatch.m_iWeight; }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)tMatch.m_iWeight; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GetWeight_c");
+		return CALC_DEP_HASHES();
+	}
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -524,24 +728,83 @@ struct Expr_Arglist_c : public ISphExpr
 		ARRAY_FOREACH ( i, m_dArgs )
 			m_dArgs[i]->Command ( eCmd, pArg );
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & )
+	{
+		assert ( 0 && "internal error: GetHash() must not be explicitly called on arglist" );
+		return 0;
+	}
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 struct Expr_Unary_c : public ISphExpr
 {
-	ISphExpr * m_pFirst;
+	ISphExpr *		m_pFirst;
+	const char *	m_szExprName;
 
-	explicit Expr_Unary_c ( ISphExpr * p ) : m_pFirst(p) {}
-	~Expr_Unary_c() { SafeRelease ( m_pFirst ); }
+	explicit Expr_Unary_c ( const char * szClassName, ISphExpr * pFirst )
+		: m_pFirst ( pFirst )
+		, m_szExprName ( szClassName )
+	{}
 
-	virtual void Command ( ESphExprCommand eCmd, void * pArg ) { m_pFirst->Command ( eCmd, pArg ); }
+	virtual ~Expr_Unary_c()
+	{
+		SafeRelease ( m_pFirst );
+	}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		m_pFirst->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME_NOCHECK(m_szExprName);
+		CALC_CHILD_HASH(m_pFirst);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
+struct Expr_Binary_c : public ISphExpr
+{
+	ISphExpr *		m_pFirst;
+	ISphExpr *		m_pSecond;
+	const char *	m_szExprName;
+
+	explicit Expr_Binary_c ( const char * szClassName, ISphExpr * pFirst, ISphExpr * pSecond )
+		: m_pFirst ( pFirst )
+		, m_pSecond ( pSecond )
+		, m_szExprName ( szClassName )
+	{}
+
+	virtual ~Expr_Binary_c()
+	{
+		SafeRelease ( m_pFirst );
+		SafeRelease ( m_pSecond );
+	}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		m_pFirst->Command ( eCmd, pArg );
+		m_pSecond->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME_NOCHECK(m_szExprName);
+		CALC_CHILD_HASH(m_pFirst);
+		CALC_CHILD_HASH(m_pSecond);
+		return CALC_DEP_HASHES();
+	}
+};
+
+//////////////////////////////////////////////////////////////////////////
+
 struct Expr_Crc32_c : public Expr_Unary_c
 {
-	explicit Expr_Crc32_c ( ISphExpr * pFirst ) : Expr_Unary_c ( pFirst ) {}
+	explicit Expr_Crc32_c ( ISphExpr * pFirst ) : Expr_Unary_c ( "Expr_Crc32_c", pFirst ) {}
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int IntEval ( const CSphMatch & tMatch ) const
 	{
@@ -574,7 +837,7 @@ static inline int Fibonacci ( int i )
 
 struct Expr_Fibonacci_c : public Expr_Unary_c
 {
-	explicit Expr_Fibonacci_c ( ISphExpr * pFirst ) : Expr_Unary_c ( pFirst ) {}
+	explicit Expr_Fibonacci_c ( ISphExpr * pFirst ) : Expr_Unary_c ( "Expr_Fibonacci_c", pFirst ) {}
 
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return Fibonacci ( m_pFirst->IntEval ( tMatch ) ); }
@@ -590,7 +853,7 @@ protected:
 
 public:
 	Expr_ToString_c ( ISphExpr * pArg, ESphAttr eArg )
-		: Expr_Unary_c ( pArg )
+		: Expr_Unary_c ( "Expr_ToString_c", pArg )
 		, m_eArg ( eArg )
 	{}
 
@@ -666,7 +929,7 @@ public:
 /// can handle arbitrary stacks of jsoncol.key1.arr2[indexexpr3].key4[keynameexpr5]
 /// m_dArgs holds the expressions that return actual accessors (either keynames or indexes)
 /// m_dRetTypes holds their respective types
-struct Expr_JsonField_c : public ExprLocatorTraits_t
+struct Expr_JsonField_c : public Expr_WithLocator_c
 {
 protected:
 	const BYTE *			m_pStrings;
@@ -676,7 +939,7 @@ protected:
 public:
 	/// takes over the expressions
 	Expr_JsonField_c ( const CSphAttrLocator & tLocator, int iLocator, CSphVector<ISphExpr*> & dArgs, CSphVector<ESphAttr> & dRetTypes )
-		: ExprLocatorTraits_t ( tLocator, iLocator )
+		: Expr_WithLocator_c ( tLocator, iLocator )
 		, m_pStrings ( NULL )
 	{
 		assert ( dArgs.GetLength()==dRetTypes.GetLength() );
@@ -692,6 +955,8 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_WithLocator_c::Command ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_STRING_POOL )
 			m_pStrings = (const BYTE*)pArg;
 		else if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS && m_iLocator!=-1 )
@@ -785,11 +1050,19 @@ public:
 		ESphJsonType eJson = sphJsonFindFirst ( &pVal );
 		return DoEval ( eJson, pVal, tMatch );
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonField_c");
+		CALC_POD_HASHES(m_dRetTypes);
+		CALC_CHILD_HASHES(m_dArgs);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
 /// fastpath (instead of generic JsonField_c) for jsoncol.key access by a static key name
-struct Expr_JsonFastKey_c : public ExprLocatorTraits_t
+struct Expr_JsonFastKey_c : public Expr_WithLocator_c
 {
 protected:
 	const BYTE *	m_pStrings;
@@ -800,7 +1073,7 @@ protected:
 public:
 	/// takes over the expressions
 	Expr_JsonFastKey_c ( const CSphAttrLocator & tLocator, int iLocator, ISphExpr * pArg )
-		: ExprLocatorTraits_t ( tLocator, iLocator )
+		: Expr_WithLocator_c ( tLocator, iLocator )
 		, m_pStrings ( NULL )
 	{
 		assert ( ( tLocator.m_iBitOffset % ROWITEM_BITS )==0 );
@@ -815,6 +1088,8 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_WithLocator_c::Command ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_STRING_POOL )
 			m_pStrings = (const BYTE*)pArg;
 	}
@@ -850,6 +1125,13 @@ public:
 		int64_t iPacked = ( ( (int64_t)( pJson-m_pStrings ) ) | ( ( (int64_t)eJson )<<32 ) );
 		return iPacked;
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonFastKey_c");
+		CALC_STR_HASH(m_sKey,m_iKeyLen);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -882,7 +1164,7 @@ protected:
 	virtual ESphJsonType GetKey ( const BYTE ** ppKey, const CSphMatch & tMatch ) const
 	{
 		assert ( ppKey );
-		if ( !m_pStrings )
+		if ( !m_pStrings || !m_pArg )
 			return JSON_EOF;
 		uint64_t uValue = m_pArg->Int64Eval ( tMatch );
 		*ppKey = m_pStrings + ( uValue & 0xffffffff );
@@ -916,6 +1198,13 @@ protected:
 		}
 	}
 
+	virtual uint64_t CalcHash ( const char * szTag, const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME_NOCHECK(szTag);
+		CALC_CHILD_HASH(m_pArg);
+		return CALC_DEP_HASHES();
+	}
+
 public:
 	virtual int StringEval ( const CSphMatch & tMatch, const BYTE ** ppStr ) const
 	{
@@ -926,6 +1215,12 @@ public:
 	virtual float Eval ( const CSphMatch & tMatch ) const { return DoEval<float> ( tMatch ); }
 	virtual int IntEval ( const CSphMatch & tMatch ) const { return DoEval<int> ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return DoEval<int64_t> ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonFieldConv_c");
+		return CALC_PARENT_HASH();
+	}
 };
 
 
@@ -1033,6 +1328,13 @@ public:
 	virtual float	Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
 	virtual bool IsStringPtr() const { return true; }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonFieldAggr_c");
+		CALC_POD_HASH(m_eFunc);
+		return CALC_PARENT_HASH();
+	}
 };
 
 
@@ -1052,6 +1354,34 @@ public:
 
 	virtual float	Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonFieldLength_c");
+		return CALC_PARENT_HASH();
+	}
+};
+
+
+struct Expr_Now_c : public ISphExpr
+{
+	Expr_Now_c ( int iNow )
+		: m_iNow ( iNow )
+	{}
+
+	virtual int		IntEval ( const CSphMatch & ) const { return m_iNow; }
+	virtual float	Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
+	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_Now_c");
+		CALC_POD_HASH(m_iNow);
+		return CALC_DEP_HASHES();
+	}
+
+private:
+	int m_iNow;
 };
 
 
@@ -1089,13 +1419,21 @@ struct Expr_Time_c : public ISphExpr
 			sVal.SetSprintf ( "%04d-%02d-%02d %02d:%02d:%02d", s.tm_year+1900, s.tm_mon+1, s.tm_mday, s.tm_hour, s.tm_min, s.tm_sec );
 		else
 			sVal.SetSprintf ( "%02d:%02d:%02d", s.tm_hour, s.tm_min, s.tm_sec );
+
+		int iLength = sVal.Length();
 		*ppStr = (const BYTE*) sVal.Leak();
-		return sVal.Length();
+		return iLength;
 	}
 
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
 	virtual bool IsStringPtr () const { return true; }
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true;
+		return 0;
+	}
 };
 
 
@@ -1127,13 +1465,28 @@ struct Expr_TimeDiff_c : public ISphExpr
 		CSphString sVal;
 		int t = iVal<0 ? -iVal : iVal;
 		sVal.SetSprintf ( "%s%02d:%02d:%02d", iVal<0 ? "-" : "", t/60/60, (t/60)%60, t%60 );
+		int iLength = sVal.Length();
 		*ppStr = (const BYTE*) sVal.Leak();
-		return sVal.Length();
+		return iLength;
 	}
 
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
 	virtual bool IsStringPtr () const { return true; }
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		m_pFirst->Command ( eCmd, pArg );
+		m_pSecond->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_TimeDiff_c");
+		CALC_CHILD_HASH(m_pFirst);
+		CALC_CHILD_HASH(m_pSecond);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -1260,6 +1613,15 @@ struct Expr_ForIn_c : public Expr_JsonFieldConv_c
 
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_ForIn_c");
+		CALC_POD_HASH(m_bStrict);
+		CALC_POD_HASH(m_bIndex);
+		CALC_CHILD_HASH(m_pExpr);
+		return CALC_PARENT_HASH();
+	}
 };
 
 
@@ -1320,6 +1682,15 @@ struct Expr_StrEq_c : public ISphExpr
 
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_StrEq_c");
+		CALC_POD_HASH(m_fnStrCmp);
+		CALC_CHILD_HASH(m_pLeft);
+		CALC_CHILD_HASH(m_pRight);
+		return CALC_DEP_HASHES();
+	}
 };
 
 
@@ -1341,6 +1712,13 @@ struct Expr_JsonFieldIsNull_c : public Expr_JsonFieldConv_c
 
 	virtual float	Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonFieldIsNull_c");
+		CALC_POD_HASH(m_bEquals);
+		return CALC_PARENT_HASH();
+	}
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -1362,6 +1740,12 @@ struct Expr_MinTopWeight : public ISphExpr
 			return;
 		if ( static_cast<ISphExtra*>(pArg)->ExtraData ( EXTRA_GET_QUEUE_WORST, (void**)&pWorst ) )
 			m_pWeight = &pWorst->m_iWeight;
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true;
+		return 0;
 	}
 };
 
@@ -1393,7 +1777,65 @@ struct Expr_MinTopSortval : public ISphExpr
 			m_pWorst = NULL;
 		}
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true;
+		return 0;
+	}
 };
+
+
+struct Expr_Rand_c : public ISphExpr
+{
+	ISphExpr *			m_pFirst;
+	bool				m_bConst;
+	mutable bool		m_bFirstEval;
+	mutable uint64_t	m_uState;
+
+	explicit Expr_Rand_c ( ISphExpr * pFirst, bool bConst )
+		: m_pFirst ( pFirst )
+		, m_bConst ( bConst )
+		, m_bFirstEval ( true )
+	{
+		sphAutoSrand ();
+		m_uState = ( (uint64_t)sphRand() << 32 ) + sphRand();
+	}
+
+	uint64_t XorShift64Star() const
+	{
+		m_uState ^= m_uState >> 12;
+		m_uState ^= m_uState << 25;
+		m_uState ^= m_uState >> 27;
+		return m_uState * 2685821657736338717ULL;
+	}
+
+	virtual float Eval ( const CSphMatch & tMatch ) const
+	{
+		if ( m_pFirst )
+		{
+			uint64_t uSeed = (uint64_t)m_pFirst->Int64Eval ( tMatch );
+			if ( !m_bConst )
+				m_uState = uSeed;
+			else if ( m_bFirstEval )
+			{
+				m_uState = uSeed;
+				m_bFirstEval = false;
+			}
+		}
+		return (float)( XorShift64Star() / (double)UINT64_MAX );
+	}
+
+	virtual int IntEval ( const CSphMatch & tMatch ) const { return (int)Eval ( tMatch ); }
+	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return (int64_t)Eval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true;
+		return 0;
+	}
+};
+
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -1412,7 +1854,7 @@ struct Expr_MinTopSortval : public ISphExpr
 #define DECLARE_UNARY_TRAITS(_classname) \
 	struct _classname : public Expr_Unary_c \
 	{ \
-		explicit _classname ( ISphExpr * pFirst ) : Expr_Unary_c ( pFirst ) {}
+		explicit _classname ( ISphExpr * pFirst ) : Expr_Unary_c ( #_classname, pFirst ) {}
 
 #define DECLARE_END() };
 
@@ -1483,13 +1925,9 @@ DECLARE_END()
 //////////////////////////////////////////////////////////////////////////
 
 #define DECLARE_BINARY_TRAITS(_classname) \
-	struct _classname : public ISphExpr \
+	struct _classname : public Expr_Binary_c \
 	{ \
-		ISphExpr * m_pFirst; \
-		ISphExpr * m_pSecond; \
-		_classname ( ISphExpr * pFirst, ISphExpr * pSecond ) : m_pFirst ( pFirst ), m_pSecond ( pSecond ) {} \
-		~_classname () { SafeRelease ( m_pFirst ); SafeRelease ( m_pSecond ); } \
-		virtual void Command ( ESphExprCommand eCmd, void * pArg ) { m_pFirst->Command ( eCmd, pArg ); m_pSecond->Command ( eCmd, pArg ); }
+		_classname ( ISphExpr * pFirst, ISphExpr * pSecond ) : Expr_Binary_c ( #_classname, pFirst, pSecond ) {}
 
 #define DECLARE_BINARY_FLT(_classname,_expr) \
 		DECLARE_BINARY_TRAITS ( _classname ) \
@@ -1571,17 +2009,19 @@ DECLARE_BINARY_FLT ( Expr_Atan2_c,	float ( atan2 ( FIRST, SECOND ) ) )
 /// boring base stuff
 struct ExprThreeway_c : public ISphExpr
 {
-	ISphExpr * m_pFirst;
-	ISphExpr * m_pSecond;
-	ISphExpr * m_pThird;
+	ISphExpr *	m_pFirst;
+	ISphExpr *	m_pSecond;
+	ISphExpr *	m_pThird;
+	CSphString	m_sExprName;
 
-	ExprThreeway_c ( ISphExpr * pFirst, ISphExpr * pSecond, ISphExpr * pThird )
+	ExprThreeway_c ( const char * szClassName, ISphExpr * pFirst, ISphExpr * pSecond, ISphExpr * pThird )
 		: m_pFirst ( pFirst )
 		, m_pSecond ( pSecond )
 		, m_pThird ( pThird )
+		, m_sExprName ( szClassName )
 	{}
 
-	~ExprThreeway_c()
+	virtual ~ExprThreeway_c()
 	{
 		SafeRelease ( m_pFirst );
 		SafeRelease ( m_pSecond );
@@ -1594,13 +2034,22 @@ struct ExprThreeway_c : public ISphExpr
 		m_pSecond->Command ( eCmd, pArg );
 		m_pThird->Command ( eCmd, pArg );
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME_NOCHECK(m_sExprName.cstr());
+		CALC_CHILD_HASH(m_pFirst);
+		CALC_CHILD_HASH(m_pSecond);
+		CALC_CHILD_HASH(m_pThird);
+		return CALC_DEP_HASHES();
+	}
 };
 
 #define DECLARE_TERNARY(_classname,_expr,_expr2,_expr3) \
 	struct _classname : public ExprThreeway_c \
 	{ \
 		_classname ( ISphExpr * pFirst, ISphExpr * pSecond, ISphExpr * pThird ) \
-			: ExprThreeway_c ( pFirst, pSecond, pThird ) {} \
+			: ExprThreeway_c ( #_classname, pFirst, pSecond, pThird ) {} \
 		\
 		virtual float Eval ( const CSphMatch & tMatch ) const { return _expr; } \
 		virtual int IntEval ( const CSphMatch & tMatch ) const { return _expr2; } \
@@ -1631,6 +2080,10 @@ DECLARE_TIMESTAMP ( Expr_Month_c,			s.tm_mon+1 )
 DECLARE_TIMESTAMP ( Expr_Year_c,			s.tm_year+1900 )
 DECLARE_TIMESTAMP ( Expr_YearMonth_c,		(s.tm_year+1900)*100+s.tm_mon+1 )
 DECLARE_TIMESTAMP ( Expr_YearMonthDay_c,	(s.tm_year+1900)*10000+(s.tm_mon+1)*100+s.tm_mday )
+DECLARE_TIMESTAMP ( Expr_Hour_c, s.tm_hour )
+DECLARE_TIMESTAMP ( Expr_Minute_c, s.tm_min )
+DECLARE_TIMESTAMP ( Expr_Second_c, s.tm_sec )
+
 
 //////////////////////////////////////////////////////////////////////////
 // UDF CALL SITE
@@ -1710,6 +2163,9 @@ enum Func_e
 	FUNC_YEAR,
 	FUNC_YEARMONTH,
 	FUNC_YEARMONTHDAY,
+	FUNC_HOUR,
+	FUNC_MINUTE,
+	FUNC_SECOND,
 
 	FUNC_MIN,
 	FUNC_MAX,
@@ -1756,7 +2212,8 @@ enum Func_e
 	FUNC_MIN_TOP_WEIGHT,
 	FUNC_MIN_TOP_SORTVAL,
 
-	FUNC_ATAN2
+	FUNC_ATAN2,
+	FUNC_RAND
 };
 
 
@@ -1774,8 +2231,8 @@ static FuncDesc_t g_dFuncs[] =
 	{ "now",			0,	FUNC_NOW,			SPH_ATTR_INTEGER },
 
 	{ "abs",			1,	FUNC_ABS,			SPH_ATTR_NONE },
-	{ "ceil",			1,	FUNC_CEIL,			SPH_ATTR_INTEGER },
-	{ "floor",			1,	FUNC_FLOOR,			SPH_ATTR_INTEGER },
+	{ "ceil",			1,	FUNC_CEIL,			SPH_ATTR_BIGINT },
+	{ "floor",			1,	FUNC_FLOOR,			SPH_ATTR_BIGINT },
 	{ "sin",			1,	FUNC_SIN,			SPH_ATTR_FLOAT },
 	{ "cos",			1,	FUNC_COS,			SPH_ATTR_FLOAT },
 	{ "ln",				1,	FUNC_LN,			SPH_ATTR_FLOAT },
@@ -1793,6 +2250,9 @@ static FuncDesc_t g_dFuncs[] =
 	{ "year",			1,	FUNC_YEAR,			SPH_ATTR_INTEGER },
 	{ "yearmonth",		1,	FUNC_YEARMONTH,		SPH_ATTR_INTEGER },
 	{ "yearmonthday",	1,	FUNC_YEARMONTHDAY,	SPH_ATTR_INTEGER },
+	{ "hour",			1,	FUNC_HOUR,			SPH_ATTR_INTEGER },
+	{ "minute",			1,	FUNC_MINUTE,		SPH_ATTR_INTEGER },
+	{ "second",			1,	FUNC_SECOND,		SPH_ATTR_INTEGER },
 
 	{ "min",			2,	FUNC_MIN,			SPH_ATTR_NONE },
 	{ "max",			2,	FUNC_MAX,			SPH_ATTR_NONE },
@@ -1839,7 +2299,8 @@ static FuncDesc_t g_dFuncs[] =
 	{ "min_top_weight",		0,	FUNC_MIN_TOP_WEIGHT,	SPH_ATTR_INTEGER },
 	{ "min_top_sortval",	0,	FUNC_MIN_TOP_SORTVAL,	SPH_ATTR_FLOAT },
 
-	{ "atan2",			2,	FUNC_ATAN2,			SPH_ATTR_FLOAT }
+	{ "atan2",			2,	FUNC_ATAN2,			SPH_ATTR_FLOAT },
+	{ "rand",			-1,	FUNC_RAND,			SPH_ATTR_FLOAT }
 };
 
 
@@ -1888,14 +2349,14 @@ static int FuncHashLookup ( const char * sKey )
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
-		10, 109, 109, 109, 109, 109, 109, 109, 109, 109,
+		0, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
-		109, 109, 109, 109, 109, 5, 109, 35, 0, 0,
-		50, 5, 20, 30, 109, 10, 109, 109, 5, 0,
-		10, 15, 5, 25, 0, 55, 0, 0, 109, 21,
-		45, 20, 0, 109, 109, 109, 109, 109, 109, 109,
+		109, 109, 109, 109, 109, 60, 109, 25, 25, 0,
+		25, 15, 30, 10, 60, 10, 109, 109, 5, 0,
+		10, 25, 25, 25, 0, 55, 0, 0, 109, 15,
+		60, 20, 0, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
 		109, 109, 109, 109, 109, 109, 109, 109, 109, 109,
@@ -1922,17 +2383,17 @@ static int FuncHashLookup ( const char * sKey )
 
 	static int dIndexes[] =
 	{
-		-1, -1, -1, -1, -1, 13, -1, 48, 49, 26,
-		30, -1, 52, 50, -1, 41, 29, 6, 51, 2,
-		-1, -1, 28, 20, 47, -1, 44, 42, 27, 37,
-		16, 33, 24, 35, 57, 58, -1, 36, 53, 14,
-		-1, -1, -1, 46, 22, 3, 11, -1, 54, 0,
-		45, -1, -1, 39, 7, 8, 38, 31, 9, 34,
-		-1, -1, 40, -1, 17, 32, -1, -1, 55, 18,
-		-1, 43, 19, 5, 23, 59, -1, 56, 4, 12,
-		-1, -1, -1, 21, 10, -1, -1, -1, -1, 25,
-		-1, -1, -1, 1, -1, -1, -1, -1, -1, -1,
-		-1, -1, -1, -1, -1, -1, -1, -1, 15
+		-1, -1, -1, -1, -1, 13, -1, 51, 52, 29,
+		-1, -1, 55, 53, -1, -1, -1, 6, 54, -1,
+		33, -1, 31, 23, 50, -1, 21, 45, 30, 2,
+		44, -1, -1, 49, 60, 61, 47, -1, 57, 63,
+		16, 32, 27, 38, 7, 8, 41, 39, 56, 26,
+		48, 11, 59, 0, 28, 62, 46, 34, 58, 37,
+		-1, 36, 43, 42, 17, 3, -1, -1, 25, 18,
+		-1, -1, 19, 15, 14, -1, 22, -1, 4, 12,
+		-1, -1, -1, 5, 10, -1, -1, -1, 24, 20,
+		35, -1, -1, -1, 40, -1, -1, -1, -1, -1,
+		-1, -1, -1, 9, -1, -1, -1, -1, 1
 	};
 
 	if ( iHash<0 || iHash>=(int)(sizeof(dIndexes)/sizeof(dIndexes[0])) )
@@ -2385,11 +2846,13 @@ int ExprParser_t::GetToken ( YYSTYPE * lvalp )
 			lvalp->iFunc = iFunc;
 			if ( iFunc==FUNC_IN )
 				return TOK_FUNC_IN;
-			if ( iFunc==FUNC_REMAP )
+			else if ( iFunc==FUNC_REMAP )
 				return TOK_FUNC_REMAP;
-			if ( iFunc==FUNC_PACKEDFACTORS || iFunc==FUNC_FACTORS )
+			else if ( iFunc==FUNC_PACKEDFACTORS || iFunc==FUNC_FACTORS )
 				return TOK_FUNC_PF;
-			return TOK_FUNC;
+			else if ( iFunc==FUNC_RAND )
+				return TOK_FUNC_RAND;
+			else return TOK_FUNC;
 		}
 
 		// ask hook
@@ -2795,8 +3258,8 @@ void ExprParser_t::ConstantFoldPass ( int iNode )
 				else
 					pRoot->m_fConst = (float)fabs ( fArg );
 				break;
-			case FUNC_CEIL:		pRoot->m_iToken = TOK_CONST_INT; pRoot->m_iLeft = -1; pRoot->m_iConst = (int)ceil ( fArg ); break;
-			case FUNC_FLOOR:	pRoot->m_iToken = TOK_CONST_INT; pRoot->m_iLeft = -1; pRoot->m_iConst = (int)floor ( fArg ); break;
+			case FUNC_CEIL:		pRoot->m_iToken = TOK_CONST_INT; pRoot->m_iLeft = -1; pRoot->m_iConst = (int64_t)ceil ( fArg ); break;
+			case FUNC_FLOOR:	pRoot->m_iToken = TOK_CONST_INT; pRoot->m_iLeft = -1; pRoot->m_iConst = (int64_t)floor ( fArg ); break;
 			case FUNC_SIN:		pRoot->m_iToken = TOK_CONST_FLOAT; pRoot->m_iLeft = -1; pRoot->m_fConst = float ( sin ( fArg) ); break;
 			case FUNC_COS:		pRoot->m_iToken = TOK_CONST_FLOAT; pRoot->m_iLeft = -1; pRoot->m_fConst = float ( cos ( fArg ) ); break;
 			case FUNC_LN:		pRoot->m_iToken = TOK_CONST_FLOAT; pRoot->m_iLeft = -1; pRoot->m_fConst = fArg>0.0f ? (float) log(fArg) : 0.0f; break;
@@ -2807,13 +3270,6 @@ void ExprParser_t::ConstantFoldPass ( int iNode )
 			default:			break;
 		}
 		return;
-	}
-
-	// constant function (such as NOW())
-	if ( pRoot->m_iToken==TOK_FUNC && pRoot->m_iFunc==FUNC_NOW )
-	{
-		pRoot->m_iToken = TOK_CONST_INT;
-		pRoot->m_iConst = m_iConstNow;
 	}
 }
 
@@ -3020,6 +3476,12 @@ public:
 		ARRAY_FOREACH ( i, m_dArgs )
 			m_dArgs[i]->Command ( eCmd, pArg );
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & bDisable )
+	{
+		bDisable = true;
+		return 0;
+	}
 };
 
 
@@ -3034,24 +3496,14 @@ public:
 
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const
 	{
-		ESphQueryState eOld = SPH_QSTATE_TOTAL;
-		if ( m_pProfiler )
-			eOld = m_pProfiler->Switch ( SPH_QSTATE_EVAL_UDF );
-
 		if ( m_bError )
-		{
-			if ( m_pProfiler )
-				m_pProfiler->Switch ( eOld );
 			return 0;
-		}
 
+		CSphScopedProfile tProf ( m_pProfiler, SPH_QSTATE_EVAL_UDF );
 		FillArgs ( tMatch );
 		UdfInt_fn pFn = (UdfInt_fn) m_pCall->m_pUdf->m_fnFunc;
 		int64_t iRes = pFn ( &m_pCall->m_tInit, &m_pCall->m_tArgs, &m_bError );
 		FreeArgs();
-
-		if ( m_pProfiler )
-			m_pProfiler->Switch ( eOld );
 		return iRes;
 	}
 
@@ -3071,24 +3523,14 @@ public:
 
 	virtual float Eval ( const CSphMatch & tMatch ) const
 	{
-		ESphQueryState eOld = SPH_QSTATE_TOTAL;
-		if ( m_pProfiler )
-			eOld = m_pProfiler->Switch ( SPH_QSTATE_EVAL_UDF );
-
 		if ( m_bError )
-		{
-			if ( m_pProfiler )
-				m_pProfiler->Switch ( eOld );
 			return 0;
-		}
 
+		CSphScopedProfile tProf ( m_pProfiler, SPH_QSTATE_EVAL_UDF );
 		FillArgs ( tMatch );
 		UdfDouble_fn pFn = (UdfDouble_fn) m_pCall->m_pUdf->m_fnFunc;
 		float fRes = (float) pFn ( &m_pCall->m_tInit, &m_pCall->m_tArgs, &m_bError );
 		FreeArgs();
-
-		if ( m_pProfiler )
-			m_pProfiler->Switch ( eOld );
 		return fRes;
 	}
 
@@ -3126,20 +3568,19 @@ public:
 
 	virtual int StringEval ( const CSphMatch & tMatch, const BYTE ** ppStr ) const
 	{
-		ESphQueryState eOld = SPH_QSTATE_TOTAL;
-		if ( m_pProfiler )
-			eOld = m_pProfiler->Switch ( SPH_QSTATE_EVAL_UDF );
+		if ( m_bError )
+		{
+			*ppStr = NULL;
+			return 0;
+		}
 
+		CSphScopedProfile tProf ( m_pProfiler, SPH_QSTATE_EVAL_UDF );
 		FillArgs ( tMatch );
 		UdfCharptr_fn pFn = (UdfCharptr_fn) m_pCall->m_pUdf->m_fnFunc;
 		char * pRes = pFn ( &m_pCall->m_tInit, &m_pCall->m_tArgs, &m_bError ); // owned now!
 		*ppStr = (const BYTE*) pRes;
 		int iLen = ( pRes ? strlen(pRes) : 0 );
 		FreeArgs();
-
-		if ( m_pProfiler )
-			m_pProfiler->Switch ( eOld );
-
 		return iLen;
 	}
 
@@ -3244,8 +3685,8 @@ ISphExpr * ExprParser_t::CreateExistNode ( const ExprNode_t & tNode )
 class Expr_Contains_c : public ISphExpr
 {
 protected:
-	ISphExpr * m_pLat;
-	ISphExpr * m_pLon;
+	ISphExpr *	m_pLat;
+	ISphExpr *	m_pLon;
 
 	static bool Contains ( float x, float y, int n, const float * p )
 	{
@@ -3306,6 +3747,15 @@ public:
 	{
 		m_pLat->Command ( eCmd, pArg );
 		m_pLon->Command ( eCmd, pArg );
+	}
+
+protected:
+	virtual uint64_t CalcHash ( const char * szTag, const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME_NOCHECK(szTag);
+		CALC_CHILD_HASH(m_pLat);
+		CALC_CHILD_HASH(m_pLon);
+		return CALC_DEP_HASHES();
 	}
 
 	// FIXME! implement SetStringPool?
@@ -3611,6 +4061,13 @@ public:
 		// do the polygon check
 		return Contains ( fLat, fLon, m_dPoly.GetLength(), m_dPoly.Begin() );
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_ContainsConstvec_c");
+		CALC_POD_HASHES(m_dPoly);
+		return CALC_PARENT_HASH();
+	}
 };
 
 
@@ -3621,7 +4078,7 @@ protected:
 	CSphVector<ISphExpr*> m_dExpr;
 
 public:
-	Expr_ContainsExprvec_c ( ISphExpr * pLat, ISphExpr * pLon, CSphVector<ISphExpr*> dExprs )
+	Expr_ContainsExprvec_c ( ISphExpr * pLat, ISphExpr * pLon, CSphVector<ISphExpr*> & dExprs )
 		: Expr_Contains_c ( pLat, pLon )
 	{
 		m_dExpr.SwapData ( dExprs );
@@ -3640,6 +4097,20 @@ public:
 			m_dPoly[i] = m_dExpr[i]->Eval ( tMatch );
 		return Contains ( m_pLat->Eval(tMatch), m_pLon->Eval(tMatch), m_dPoly.GetLength(), m_dPoly.Begin() );
 	}
+
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		Expr_Contains_c::Command ( eCmd, pArg );
+		ARRAY_FOREACH ( i, m_dExpr )
+			m_dExpr[i]->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_ContainsExprvec_c");
+		CALC_CHILD_HASHES(m_dExpr);
+		return CALC_PARENT_HASH();
+	}
 };
 
 
@@ -3651,11 +4122,10 @@ protected:
 
 public:
 	Expr_ContainsStrattr_c ( ISphExpr * pLat, ISphExpr * pLon, ISphExpr * pStr, bool bGeo )
-		: Expr_Contains_c ( pLat, pLon )
-	{
-		m_pStr = pStr;
-		m_bGeo = bGeo;
-	}
+		: Expr_Contains_c (pLat, pLon )
+		, m_pStr ( pStr )
+		, m_bGeo ( bGeo )
+	{}
 
 	~Expr_ContainsStrattr_c()
 	{
@@ -3696,6 +4166,13 @@ public:
 		Expr_Contains_c::Command ( eCmd, pArg );
 		m_pStr->Command ( eCmd, pArg );
 	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_ContainsStrattr_c");
+		CALC_CHILD_HASH(m_pStr);
+		return CALC_PARENT_HASH();
+	}
 };
 
 
@@ -3718,17 +4195,13 @@ ISphExpr * ExprParser_t::CreateContainsNode ( const ExprNode_t & tNode )
 	bool bGeoTesselate = ( m_dNodes[iPoly].m_iToken==TOK_FUNC && m_dNodes[iPoly].m_iFunc==FUNC_GEOPOLY2D );
 
 	if ( dPolyArgs.GetLength()==1 && m_dNodes[dPolyArgs[0]].m_iToken==TOK_ATTR_STRING )
-	{
-		return new Expr_ContainsStrattr_c ( CreateTree(iLat), CreateTree(iLon),
-			CreateTree ( dPolyArgs[0] ), bGeoTesselate );
-	}
+		return new Expr_ContainsStrattr_c ( CreateTree(iLat), CreateTree(iLon), CreateTree ( dPolyArgs[0] ), bGeoTesselate );
 
 	bool bConst = ARRAY_ALL ( bConst, dPolyArgs, IsConst ( &m_dNodes [ dPolyArgs[_all] ] ) );
 	if ( bConst )
 	{
 		// POLY2D(numeric-consts)
-		return new Expr_ContainsConstvec_c ( CreateTree(iLat), CreateTree(iLon),
-			dPolyArgs, m_dNodes.Begin(), bGeoTesselate );
+		return new Expr_ContainsConstvec_c ( CreateTree(iLat), CreateTree(iLon), dPolyArgs, m_dNodes.Begin(), bGeoTesselate );
 	} else
 	{
 		// POLY2D(generic-exprs)
@@ -3813,6 +4286,20 @@ public:
 		return m_pVal->Int64Eval ( tMatch );
 	}
 
+	virtual void Command ( ESphExprCommand eCmd, void * pArg )
+	{
+		m_pCond->Command ( eCmd, pArg );
+		m_pVal->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_Remap_c");
+		CALC_POD_HASHES(m_dPairs);
+		CALC_CHILD_HASH(m_pCond);
+		CALC_CHILD_HASH(m_pVal);
+		return CALC_DEP_HASHES();
+	}
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -3832,6 +4319,7 @@ ISphExpr * ExprParser_t::CreateTree ( int iNode )
 	{
 		switch ( tNode.m_iFunc )
 		{
+		case FUNC_NOW:
 		case FUNC_IN:
 		case FUNC_EXIST:
 		case FUNC_GEODIST:
@@ -3968,7 +4456,7 @@ ISphExpr * ExprParser_t::CreateTree ( int iNode )
 
 				switch ( eFunc )
 				{
-					case FUNC_NOW:		assert ( 0 ); break; // prevent gcc bitching
+					case FUNC_NOW:		return new Expr_Now_c(m_iConstNow); break;
 
 					case FUNC_ABS:		return new Expr_Abs_c ( dArgs[0] );
 					case FUNC_CEIL:		return new Expr_Ceil_c ( dArgs[0] );
@@ -3989,6 +4477,9 @@ ISphExpr * ExprParser_t::CreateTree ( int iNode )
 					case FUNC_YEAR:			return new Expr_Year_c ( dArgs[0] );
 					case FUNC_YEARMONTH:	return new Expr_YearMonth_c ( dArgs[0] );
 					case FUNC_YEARMONTHDAY:	return new Expr_YearMonthDay_c ( dArgs[0] );
+					case FUNC_HOUR:			return new Expr_Hour_c ( dArgs[0] );
+					case FUNC_MINUTE:		return new Expr_Minute_c ( dArgs[0] );
+					case FUNC_SECOND:		return new Expr_Second_c ( dArgs[0] );
 
 					case FUNC_MIN:		return new Expr_Min_c ( dArgs[0], dArgs[1] );
 					case FUNC_MAX:		return new Expr_Max_c ( dArgs[0], dArgs[1] );
@@ -3999,6 +4490,7 @@ ISphExpr * ExprParser_t::CreateTree ( int iNode )
 					case FUNC_MADD:		return new Expr_Madd_c ( dArgs[0], dArgs[1], dArgs[2] );
 					case FUNC_MUL3:		return new Expr_Mul3_c ( dArgs[0], dArgs[1], dArgs[2] );
 					case FUNC_ATAN2:	return new Expr_Atan2_c ( dArgs[0], dArgs[1] );
+					case FUNC_RAND:		return new Expr_Rand_c ( dArgs.GetLength() ? dArgs[0] : NULL, tNode.m_iLeft>=0 ? IsConst ( &m_dNodes[tNode.m_iLeft] ) : false );
 
 					case FUNC_INTERVAL:	return CreateIntervalNode ( tNode.m_iLeft, dArgs );
 					case FUNC_IN:		return CreateInNode ( iNode );
@@ -4155,9 +4647,6 @@ ISphExpr * ExprParser_t::CreateTree ( int iNode )
 template < typename T >
 class Expr_ArgVsSet_c : public ISphExpr
 {
-protected:
-	ISphExpr *			m_pArg;
-
 public:
 	explicit Expr_ArgVsSet_c ( ISphExpr * pArg ) : m_pArg ( pArg ) {}
 	~Expr_ArgVsSet_c () { SafeRelease ( m_pArg ); }
@@ -4165,9 +4654,19 @@ public:
 	virtual int IntEval ( const CSphMatch & tMatch ) const = 0;
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float) IntEval ( tMatch ); }
 	virtual int64_t Int64Eval ( const CSphMatch & tMatch ) const { return IntEval ( tMatch ); }
+	virtual void Command ( ESphExprCommand eCmd, void * pArg ) { if ( m_pArg ) m_pArg->Command ( eCmd, pArg ); }
 
 protected:
+	ISphExpr * m_pArg;
+
 	T ExprEval ( ISphExpr * pArg, const CSphMatch & tMatch ) const;
+
+	virtual uint64_t CalcHash ( const char * szTag, const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME_NOCHECK(szTag);
+		CALC_CHILD_HASH(m_pArg);
+		return CALC_DEP_HASHES();
+	}
 };
 
 template<> int Expr_ArgVsSet_c<int>::ExprEval ( ISphExpr * pArg, const CSphMatch & tMatch ) const
@@ -4195,9 +4694,6 @@ template<> int64_t Expr_ArgVsSet_c<int64_t>::ExprEval ( ISphExpr * pArg, const C
 template < typename T >
 class Expr_ArgVsConstSet_c : public Expr_ArgVsSet_c<T>
 {
-protected:
-	CSphVector<T> m_dValues;
-
 public:
 	/// take ownership of arg, pre-evaluate and dismiss turn points
 	Expr_ArgVsConstSet_c ( ISphExpr * pArg, CSphVector<ISphExpr *> & dArgs, int iSkip )
@@ -4209,6 +4705,8 @@ public:
 			m_dValues.Add ( Expr_ArgVsSet_c<T>::ExprEval ( dArgs[i], tDummy ) );
 			SafeRelease ( dArgs[i] );
 		}
+
+		CalcValueHash();
 	}
 
 	/// take ownership of arg, and copy that constlist
@@ -4228,6 +4726,29 @@ public:
 			ARRAY_FOREACH ( i, pConsts->m_dInts )
 				m_dValues.Add ( (T)pConsts->m_dInts[i] );
 		}
+
+		CalcValueHash();
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_ArgVsConstSet_c");
+		return CALC_PARENT_HASH();
+	}
+
+protected:
+	CSphVector<T>	m_dValues;
+	uint64_t		m_uValueHash;
+
+	void CalcValueHash()
+	{
+		ARRAY_FOREACH ( i, m_dValues )
+			m_uValueHash = sphFNV64 ( &m_dValues[i], sizeof(m_dValues[i]), i ? m_uValueHash : SPH_FNV64_SEED );
+	}
+
+	virtual uint64_t CalcHash ( const char * szTag, const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		return Expr_ArgVsSet_c<T>::CalcHash ( szTag, tSorterSchema, uPrevHash^m_uValueHash, bDisable );
 	}
 };
 
@@ -4253,7 +4774,11 @@ public:
 		return this->m_dValues.GetLength();
 	}
 
-	virtual void Command ( ESphExprCommand eCmd, void * pArg ) { this->m_pArg->Command ( eCmd, pArg ); }
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_IntervalConst_c");		
+		return Expr_ArgVsConstSet_c<T>::CalcHash ( szClassName, tSorterSchema, uHash, bDisable );		// can't do CALC_PARENT_HASH because of gcc and templates
+	}
 };
 
 
@@ -4285,9 +4810,16 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
-		this->m_pArg->Command ( eCmd, pArg );
+		Expr_ArgVsSet_c<T>::Command ( eCmd, pArg );
 		ARRAY_FOREACH ( i, m_dTurnPoints )
 			m_dTurnPoints[i]->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_Interval_c");
+		CALC_CHILD_HASHES(m_dTurnPoints);
+		return Expr_ArgVsSet_c<T>::CalcHash ( szClassName, tSorterSchema, uHash, bDisable );		// can't do CALC_PARENT_HASH because of gcc and templates
 	}
 };
 
@@ -4312,7 +4844,11 @@ public:
 		return this->m_dValues.BinarySearch ( val )!=NULL;
 	}
 
-	virtual void Command ( ESphExprCommand eCmd, void * pArg ) { this->m_pArg->Command ( eCmd, pArg ); }
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_In_c");
+		return Expr_ArgVsConstSet_c<T>::CalcHash ( szClassName, tSorterSchema, uHash, bDisable );		// can't do CALC_PARENT_HASH because of gcc and templates
+	}
 };
 
 
@@ -4320,15 +4856,15 @@ public:
 /// (for the sake of evaluator, uservar is a pre-sorted, refcounted external vector)
 class Expr_InUservar_c : public Expr_ArgVsSet_c<int64_t>
 {
-protected:
-	UservarIntSet_c * m_pConsts;
-
 public:
 	/// just get hold of args
 	explicit Expr_InUservar_c ( ISphExpr * pArg, UservarIntSet_c * pConsts )
 		: Expr_ArgVsSet_c<int64_t> ( pArg )
 		, m_pConsts ( pConsts ) // no addref, hook should have addref'd (otherwise there'd be a race)
-	{}
+	{
+		assert ( m_pConsts );
+		m_uHash = sphFNV64 ( m_pConsts->Begin(), m_pConsts->GetLength()*sizeof((*m_pConsts)[0]) );
+	}
 
 	/// release the uservar value
 	~Expr_InUservar_c()
@@ -4343,20 +4879,27 @@ public:
 		return m_pConsts->BinarySearch ( iVal )!=NULL;
 	}
 
-	virtual void Command ( ESphExprCommand eCmd, void * pArg ) { this->m_pArg->Command ( eCmd, pArg ); }
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_InUservar_c");
+		return CALC_PARENT_HASH_EX(m_uHash);
+	}
+
+protected:
+	UservarIntSet_c *	m_pConsts;
+	uint64_t			m_uHash;
 };
 
 
 /// IN() evaluator, MVA attribute vs. constant values
 template < bool MVA64 >
-class Expr_MVAIn_c : public Expr_ArgVsConstSet_c<int64_t>
+class Expr_MVAIn_c : public Expr_ArgVsConstSet_c<int64_t>, public ExprLocatorTraits_t
 {
 public:
 	/// pre-sort values for binary search
 	Expr_MVAIn_c ( const CSphAttrLocator & tLoc, int iLocator, ConstList_c * pConsts, UservarIntSet_c * pUservar )
 		: Expr_ArgVsConstSet_c<int64_t> ( NULL, pConsts )
-		, m_tLocator ( tLoc )
-		, m_iLocator ( iLocator )
+		, ExprLocatorTraits_t ( tLoc, iLocator )
 		, m_pMvaPool ( NULL )
 		, m_pUservar ( pUservar )
 		, m_bArenaProhibit ( false )
@@ -4364,6 +4907,10 @@ public:
 		assert ( tLoc.m_iBitOffset>=0 && tLoc.m_iBitCount>0 );
 		assert ( !pConsts || !pUservar ); // either constlist or uservar, not both
 		this->m_dValues.Sort();
+
+		// consts are handled in Expr_ArgVsConstSet_c, we only need uservars
+		if ( pUservar )
+			m_uValueHash = sphFNV64 ( pUservar->Begin(), pUservar->GetLength()*sizeof((*pUservar)[0]) );
 	}
 
 	~Expr_MVAIn_c()
@@ -4387,6 +4934,9 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_ArgVsConstSet_c<int64_t>::Command ( eCmd, pArg );
+		ExprLocatorTraits_t::HandleCommand ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_MVA_POOL )
 		{
 			const PoolPtrs_t * pPool = (const PoolPtrs_t *)pArg;
@@ -4394,13 +4944,16 @@ public:
 			m_pMvaPool = pPool->m_pMva;
 			m_bArenaProhibit = pPool->m_bArenaProhibit;
 		}
-		if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS )
-			static_cast < CSphVector<int>* > ( pArg )->Add ( m_iLocator );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_MVAIn_c");
+		CALC_POD_HASH(m_bArenaProhibit);
+		return CALC_DEP_HASHES_EX(m_uValueHash);
 	}
 
 protected:
-	CSphAttrLocator		m_tLocator;
-	int					m_iLocator; // used by SPH_EXPR_GET_DEPENDENT_COLS
 	const DWORD *		m_pMvaPool;
 	UservarIntSet_c *	m_pUservar;
 	bool				m_bArenaProhibit;
@@ -4471,19 +5024,11 @@ int Expr_MVAIn_c<true>::MvaEval ( const DWORD * pMva ) const
 }
 
 /// LENGTH() evaluator for MVAs
-class Expr_MVALength_c : public ISphExpr
+class Expr_MVALength_c : public Expr_WithLocator_c
 {
-protected:
-	CSphAttrLocator		m_tLocator;
-	int					m_iLocator; // used by SPH_EXPR_GET_DEPENDENT_COLS
-	bool				m_b64;
-	const DWORD *		m_pMvaPool;
-	bool				m_bArenaProhibit;
-
 public:
 	Expr_MVALength_c ( const CSphAttrLocator & tLoc, int iLocator, bool b64 )
-		: m_tLocator ( tLoc )
-		, m_iLocator ( iLocator )
+		: Expr_WithLocator_c ( tLoc, iLocator )
 		, m_b64 ( b64 )
 		, m_pMvaPool ( NULL )
 		, m_bArenaProhibit ( false )
@@ -4501,6 +5046,8 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_WithLocator_c::Command ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_MVA_POOL )
 		{
 			const PoolPtrs_t * pPool = (const PoolPtrs_t *)pArg;
@@ -4508,22 +5055,32 @@ public:
 			m_pMvaPool = pPool->m_pMva;
 			m_bArenaProhibit = pPool->m_bArenaProhibit;
 		}
-		if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS )
-			static_cast < CSphVector<int>* > ( pArg )->Add ( m_iLocator );
 	}
 
 	virtual float Eval ( const CSphMatch & tMatch ) const { return (float)IntEval ( tMatch ); }
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_MVALength_c");
+		CALC_POD_HASH(m_bArenaProhibit);
+		CALC_POD_HASH(m_b64);
+		return CALC_DEP_HASHES();
+	}
+
+protected:
+	bool				m_b64;
+	const DWORD *		m_pMvaPool;
+	bool				m_bArenaProhibit;
 };
 
 
 /// aggregate functions evaluator for MVA attribute
 template < bool MVA64 >
-class Expr_MVAAggr_c : public ISphExpr
+class Expr_MVAAggr_c : public Expr_WithLocator_c
 {
 public:
 	Expr_MVAAggr_c ( const CSphAttrLocator & tLoc, int iLocator, ESphAggrFunc eFunc )
-		: m_tLocator ( tLoc )
-		, m_iLocator ( iLocator )
+		: Expr_WithLocator_c ( tLoc, iLocator )
 		, m_pMvaPool ( NULL )
 		, m_bArenaProhibit ( false )
 		, m_eFunc ( eFunc )
@@ -4543,6 +5100,8 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_WithLocator_c::Command ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_MVA_POOL )
 		{
 			const PoolPtrs_t * pPool = (const PoolPtrs_t *)pArg;
@@ -4550,16 +5109,20 @@ public:
 			m_pMvaPool = pPool->m_pMva;
 			m_bArenaProhibit = pPool->m_bArenaProhibit;
 		}
-		if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS )
-			static_cast < CSphVector<int>* > ( pArg )->Add ( m_iLocator );
 	}
 
 	virtual float	Eval ( const CSphMatch & tMatch ) const { return (float)Int64Eval ( tMatch ); }
 	virtual int		IntEval ( const CSphMatch & tMatch ) const { return (int)Int64Eval ( tMatch ); }
 
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_MVAAggr_c");
+		CALC_POD_HASH(m_bArenaProhibit);
+		CALC_POD_HASH(m_eFunc);
+		return CALC_DEP_HASHES();
+	}
+
 protected:
-	CSphAttrLocator		m_tLocator;
-	int					m_iLocator; // used by SPH_EXPR_GET_DEPENDENT_COLS
 	const DWORD *		m_pMvaPool;
 	bool				m_bArenaProhibit;
 	ESphAggrFunc		m_eFunc;
@@ -4604,18 +5167,11 @@ int64_t Expr_MVAAggr_c<true>::MvaAggr ( const DWORD * pMva, ESphAggrFunc eFunc )
 /// IN() evaluator, JSON array vs. constant values
 class Expr_JsonFieldIn_c : public Expr_ArgVsConstSet_c<int64_t>
 {
-protected:
-	UservarIntSet_c *	m_pUservar;
-	const BYTE *		m_pStrings;
-	ISphExpr *			m_pArg;
-	CSphVector<int64_t>	m_dHashes;
-
 public:
 	Expr_JsonFieldIn_c ( ConstList_c * pConsts, UservarIntSet_c * pUservar, ISphExpr * pArg )
-		: Expr_ArgVsConstSet_c<int64_t> ( NULL, pConsts )
+		: Expr_ArgVsConstSet_c<int64_t> ( pArg, pConsts )
 		, m_pUservar ( pUservar )
 		, m_pStrings ( NULL )
-		, m_pArg ( pArg )
 	{
 		assert ( !pConsts || !pUservar );
 
@@ -4638,20 +5194,24 @@ public:
 			}
 		}
 
+		// consts are handled in Expr_ArgVsConstSet_c, we only need uservars
+		if ( m_pUservar )
+			m_uValueHash = sphFNV64 ( pFilter, (pFilterMax-pFilter)*sizeof(*pFilter) );
+
 		m_dHashes.Sort();
 	}
 
 	~Expr_JsonFieldIn_c()
 	{
 		SafeRelease ( m_pUservar );
-		SafeRelease ( m_pArg );
 	}
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_ArgVsConstSet_c<int64_t>::Command ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_STRING_POOL )
 			m_pStrings = (const BYTE*)pArg;
-		m_pArg->Command ( eCmd, pArg );
 	}
 
 	/// evaluate arg, check if any values are within set
@@ -4679,11 +5239,11 @@ public:
 						int iRes = 0;
 						switch (eType)
 						{
-						case JSON_STRING: iRes =  StringArrayEval ( pVal, true ); break;
-						case JSON_INT32: iRes = ValueEval ( (int64_t) sphJsonLoadInt ( &pVal ) ); break;
-						case JSON_INT64: iRes = ValueEval ( sphJsonLoadBigint ( &pVal ) ); break;
-						case JSON_DOUBLE: iRes = ValueEval ( (int64_t)sphQW2D ( sphJsonLoadBigint ( &pVal ) ) ); break;
-						default: break; // for weird subobjects, just let IN() return false
+							case JSON_STRING: iRes =  StringArrayEval ( pVal, true ); break;
+							case JSON_INT32: iRes = ValueEval ( (int64_t) sphJsonLoadInt ( &pVal ) ); break;
+							case JSON_INT64: iRes = ValueEval ( sphJsonLoadBigint ( &pVal ) ); break;
+							case JSON_DOUBLE: iRes = ValueEval ( (int64_t)sphQW2D ( sphJsonLoadBigint ( &pVal ) ) ); break;
+							default: break; // for weird subobjects, just let IN() return false
 						}
 						if ( iRes )
 							return 1;
@@ -4695,7 +5255,17 @@ public:
 		}
 	}
 
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_JsonFieldIn_c");
+		return CALC_PARENT_HASH_EX(m_uValueHash);
+	}
+
 protected:
+	UservarIntSet_c *	m_pUservar;
+	const BYTE *		m_pStrings;
+	CSphVector<int64_t>	m_dHashes;
+
 	ESphJsonType GetKey ( const BYTE ** ppKey, const CSphMatch & tMatch ) const
 	{
 		assert ( ppKey );
@@ -4754,11 +5324,9 @@ protected:
 };
 
 
-class Expr_StrIn_c : public Expr_ArgVsConstSet_c<int64_t>
+class Expr_StrIn_c : public Expr_ArgVsConstSet_c<int64_t>, public ExprLocatorTraits_t
 {
 protected:
-	CSphAttrLocator			m_tLocator;
-	int						m_iLocator;
 	const BYTE *			m_pStrings;
 	UservarIntSet_c *		m_pUservar;
 	CSphVector<CSphString>  m_dStringValues;
@@ -4767,8 +5335,7 @@ protected:
 public:
 	Expr_StrIn_c ( const CSphAttrLocator & tLoc, int iLocator, ConstList_c * pConsts, UservarIntSet_c * pUservar, ESphCollation eCollation )
 		: Expr_ArgVsConstSet_c<int64_t> ( NULL, pConsts )
-		, m_tLocator ( tLoc )
-		, m_iLocator ( iLocator )
+		, ExprLocatorTraits_t ( tLoc, iLocator )
 		, m_pStrings ( NULL )
 		, m_pUservar ( pUservar )
 	{
@@ -4795,6 +5362,10 @@ public:
 				m_dStringValues.Add ( sRes );
 			}
 		}
+
+		// consts are handled in Expr_ArgVsConstSet_c, we only need uservars
+		if ( m_pUservar )
+			m_uValueHash = sphFNV64 ( pFilter, (pFilterMax-pFilter)*sizeof(*pFilter) );
 	}
 
 	~Expr_StrIn_c()
@@ -4822,10 +5393,18 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
+		Expr_ArgVsConstSet_c<int64_t>::Command ( eCmd, pArg );
+		ExprLocatorTraits_t::HandleCommand ( eCmd, pArg );
+
 		if ( eCmd==SPH_EXPR_SET_STRING_POOL )
 			m_pStrings = (const BYTE*)pArg;
-		if ( eCmd==SPH_EXPR_GET_DEPENDENT_COLS )
-			static_cast < CSphVector<int>* > ( pArg )->Add ( m_iLocator );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_StrIn_c");
+		CALC_POD_HASH(m_fnStrCmp);
+		return CALC_PARENT_HASH_EX(m_uValueHash);
 	}
 };
 
@@ -4839,9 +5418,6 @@ public:
 template < typename T >
 class Expr_Bitdot_c : public Expr_ArgVsSet_c<T>
 {
-protected:
-	CSphVector<ISphExpr *> m_dBitWeights;
-
 public:
 	/// take ownership of arg and turn points
 	explicit Expr_Bitdot_c ( const CSphVector<ISphExpr *> & dArgs )
@@ -4851,26 +5427,6 @@ public:
 			m_dBitWeights.Add ( dArgs[i] );
 	}
 
-protected:
-	/// generic evaluate
-	virtual T DoEval ( const CSphMatch & tMatch ) const
-	{
-		int64_t uArg = this->m_pArg->Int64Eval ( tMatch ); // 'this' fixes gcc braindamage
-		T tRes = 0;
-
-		int iBit = 0;
-		while ( uArg && iBit<m_dBitWeights.GetLength() )
-		{
-			if ( uArg & 1 )
-				tRes += Expr_ArgVsSet_c<T>::ExprEval ( m_dBitWeights[iBit], tMatch );
-			uArg >>= 1;
-			iBit++;
-		}
-
-		return tRes;
-	}
-
-public:
 	virtual float Eval ( const CSphMatch & tMatch ) const
 	{
 		return (float) DoEval ( tMatch );
@@ -4888,9 +5444,37 @@ public:
 
 	virtual void Command ( ESphExprCommand eCmd, void * pArg )
 	{
-		this->m_pArg->Command ( eCmd, pArg );
+		Expr_ArgVsSet_c<T>::Command ( eCmd, pArg );
 		ARRAY_FOREACH ( i, m_dBitWeights )
 			m_dBitWeights[i]->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_Bitdot_c");
+		CALC_CHILD_HASHES(m_dBitWeights);
+		return Expr_ArgVsSet_c<T>::CalcHash ( szClassName, tSorterSchema, uHash, bDisable );		// can't do CALC_PARENT_HASH because of gcc and templates
+	}
+
+protected:
+	CSphVector<ISphExpr *> m_dBitWeights;
+
+	/// generic evaluate
+	virtual T DoEval ( const CSphMatch & tMatch ) const
+	{
+		int64_t uArg = this->m_pArg->Int64Eval ( tMatch ); // 'this' fixes gcc braindamage
+		T tRes = 0;
+
+		int iBit = 0;
+		while ( uArg && iBit<m_dBitWeights.GetLength() )
+		{
+			if ( uArg & 1 )
+				tRes += Expr_ArgVsSet_c<T>::ExprEval ( m_dBitWeights[iBit], tMatch );
+			uArg >>= 1;
+			iBit++;
+		}
+
+		return tRes;
 	}
 };
 
@@ -4950,6 +5534,16 @@ public:
 		}
 	}
 
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GeodistAttrConst_c");
+		CALC_POD_HASH(m_fAnchorLat);
+		CALC_POD_HASH(m_fAnchorLon);
+		CALC_POD_HASH(m_fOut);
+		CALC_POD_HASH(m_pFunc);
+		return CALC_DEP_HASHES();
+	}
+
 private:
 	Geofunc_fn		m_pFunc;
 	float			m_fOut;
@@ -4989,6 +5583,18 @@ public:
 	{
 		m_pLat->Command ( eCmd, pArg );
 		m_pLon->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_GeodistConst_c");
+		CALC_POD_HASH(m_fAnchorLat);
+		CALC_POD_HASH(m_fAnchorLon);
+		CALC_POD_HASH(m_fOut);
+		CALC_POD_HASH(m_pFunc);
+		CALC_CHILD_HASH(m_pLat);
+		CALC_CHILD_HASH(m_pLon);
+		return CALC_DEP_HASHES();
 	}
 
 private:
@@ -5032,6 +5638,18 @@ public:
 		m_pLon->Command ( eCmd, pArg );
 		m_pAnchorLat->Command ( eCmd, pArg );
 		m_pAnchorLon->Command ( eCmd, pArg );
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+	{
+		EXPR_CLASS_NAME("Expr_Geodist_c");
+		CALC_POD_HASH(m_fOut);
+		CALC_POD_HASH(m_pFunc);
+		CALC_CHILD_HASH(m_pLat);
+		CALC_CHILD_HASH(m_pLon);
+		CALC_CHILD_HASH(m_pAnchorLat);
+		CALC_CHILD_HASH(m_pAnchorLon);
+		return CALC_DEP_HASHES();
 	}
 
 private:
@@ -5287,6 +5905,8 @@ ISphExpr * ExprParser_t::CreateLengthNode ( const ExprNode_t & tNode, ISphExpr *
 	const ExprNode_t & tLeft = m_dNodes [ tNode.m_iLeft ];
 	switch ( tLeft.m_iToken )
 	{
+		case TOK_FUNC:
+			return new Expr_StrLength_c ( pLeft );
 		case TOK_ATTR_MVA32:
 		case TOK_ATTR_MVA64:
 			return new Expr_MVALength_c ( tLeft.m_tLocator, tLeft.m_iLocator, tLeft.m_iToken==TOK_ATTR_MVA64 );
@@ -5725,7 +6345,15 @@ int ExprParser_t::AddNodeFunc ( int iFunc, int iFirst, int iSecond, int iThird, 
 		int iArgc = 0;
 		if ( iFirst>=0 )
 			iArgc = ( m_dNodes [ iFirst ].m_iToken==',' ) ? m_dNodes [ iFirst ].m_iArgs : 1;
-		if ( iExpectedArgc<0 )
+
+		if ( eFunc==FUNC_RAND )
+		{
+			if ( iArgc>1 )
+			{
+				m_sParserError.SetSprintf ( "%s() called with %d args, either 0 or 1 args expected", sFuncName, iArgc );
+				return -1;
+			}
+		} else if ( iExpectedArgc<0 )
 		{
 			if ( iArgc<-iExpectedArgc )
 			{
@@ -5802,7 +6430,7 @@ int ExprParser_t::AddNodeFunc ( int iFunc, int iFirst, int iSecond, int iThird, 
 
 	// check that first SINT or timestamp family arg is integer
 	if ( eFunc==FUNC_SINT || eFunc==FUNC_DAY || eFunc==FUNC_MONTH || eFunc==FUNC_YEAR || eFunc==FUNC_YEARMONTH || eFunc==FUNC_YEARMONTHDAY
-		|| eFunc==FUNC_FIBONACCI )
+		|| eFunc==FUNC_FIBONACCI || eFunc==FUNC_HOUR || eFunc==FUNC_MINUTE || eFunc==FUNC_SECOND )
 	{
 		assert ( iFirst>=0 );
 		if ( m_dNodes [ iFirst ].m_eRetType!=SPH_ATTR_INTEGER )
@@ -5949,6 +6577,15 @@ int ExprParser_t::AddNodeFunc ( int iFunc, int iFirst, int iSecond, int iThird, 
 		if ( eSecondRet!=SPH_ATTR_FLOAT && tFourthList.m_dInts.GetLength()==0 )
 		{
 			m_sParserError.SetSprintf ( "%s() second argument results in integer value and thus fourth argument should be a list of integers", sFuncName );
+			return -1;
+		}
+	}
+
+	if ( eFunc==FUNC_RAND )
+	{
+		if ( iFirst>=0 && !IsNumeric ( m_dNodes [ iFirst ].m_eRetType ) )
+		{
+			m_sParserError.SetSprintf ( "%s() argument must be numeric", sFuncName );
 			return -1;
 		}
 	}
@@ -6499,6 +7136,12 @@ ISphExpr * sphExprParse ( const char * sExpr, const ISphSchema & tSchema, ESphAt
 	if ( pPackedFactorsFlags )
 		*pPackedFactorsFlags = tParser.m_uPackedFactorFlags;
 	return pRes;
+}
+
+/// json type autoconversion
+ISphExpr * sphJsonFieldConv ( ISphExpr * pExpr )
+{
+	return new Expr_JsonFieldConv_c ( pExpr );
 }
 
 //

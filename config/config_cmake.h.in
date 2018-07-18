@@ -26,7 +26,7 @@
 
 /* Define to 1 if you want runtime load odbc/iodbc using dlopen */
 #cmakedefine DL_UNIXODBC ${DL_UNIXODBC}
-#cmakedefine UNIXODBC_LIB ${UNIXODBC_LIB}
+#cmakedefine UNIXODBC_LIB "${UNIXODBC_LIB}"
 
 /* Define to 1 if you have the `backtrace' function. */
 #cmakedefine HAVE_BACKTRACE ${HAVE_BACKTRACE}
@@ -42,6 +42,9 @@
 
 /* Define if your system supports the epoll system calls */
 #cmakedefine HAVE_EPOLL ${HAVE_EPOLL}
+
+/* Define if your system supports the eventfd system calls */
+#cmakedefine01 HAVE_EVENTFD
 
 /* Define to 1 if you have the <execinfo.h> header file. */
 #cmakedefine HAVE_EXECINFO_H ${HAVE_EXECINFO_H}

@@ -18,6 +18,7 @@
 #include "sphinxutils.h"
 #include "sphinxstem.h"
 #include "sphinxplugin.h"
+#include "sphinxrlp.h"
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -43,6 +44,8 @@ static bool			g_bQuiet		= false;
 static bool			g_bProgress		= true;
 static bool			g_bPrintQueries	= false;
 static bool			g_bKeepAttrs	= false;
+static CSphString	g_sKeepAttrsPath;
+static CSphVector<CSphString> g_dKeepAttrs;
 
 static const char *	g_sBuildStops	= NULL;
 static int				g_iTopStops		= 100;
@@ -57,9 +60,6 @@ static int				g_iWriteBuffer			= 0;
 static int				g_iMaxFileFieldBuffer	= 1024*1024;
 
 static ESphOnFileFieldError	g_eOnFileFieldError = FFE_IGNORE_FIELD;
-
-static const int		EXT_COUNT = 9;
-static const char *	g_dExt[EXT_COUNT] = { "sph", "spa", "spi", "spd", "spp", "spm", "spk", "sps", "spe" };
 
 #if USE_WINDOWS
 static char			g_sMinidump[256];
@@ -215,7 +215,6 @@ public:
 	virtual const CSphVector <CSphSavedFile> & GetWordformsFileInfos () { return m_dWFFileInfos; }
 	virtual const CSphMultiformContainer * GetMultiWordforms () const { return NULL; }
 	virtual uint64_t		GetSettingsFNV () const { return 0; }
-	virtual void		SetApplyMorph ( bool ) {}
 
 	virtual bool IsStopWord ( const BYTE * ) const { return false; }
 
@@ -663,7 +662,7 @@ bool SqlParamsConfigure ( CSphSourceParams_SQL & tParams, const CSphConfigSectio
 
 
 #if USE_PGSQL
-CSphSource * SpawnSourcePgSQL ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourcePgSQL ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="pgsql" );
 
@@ -673,13 +672,7 @@ CSphSource * SpawnSourcePgSQL ( const CSphConfigSection & hSource, const char * 
 
 	LOC_GETS ( tParams.m_sClientEncoding,	"sql_client_encoding" );
 
-	CSphSource_PgSQL * pSrcPgSQL;
-#if USE_RLP
-	if ( bProxy )
-		pSrcPgSQL = new CSphSource_Proxy<CSphSource_PgSQL> ( sSourceName );
-	else
-#endif
-	pSrcPgSQL = new CSphSource_PgSQL ( sSourceName );
+	CSphSource_PgSQL * pSrcPgSQL = CreateSourceWithProxy<CSphSource_PgSQL> ( sSourceName, bProxy );
 	if ( !pSrcPgSQL->Setup ( tParams ) )
 		SafeDelete ( pSrcPgSQL );
 
@@ -689,7 +682,7 @@ CSphSource * SpawnSourcePgSQL ( const CSphConfigSection & hSource, const char * 
 
 
 #if USE_MYSQL
-CSphSource * SpawnSourceMySQL ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourceMySQL ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="mysql" );
 
@@ -703,14 +696,7 @@ CSphSource * SpawnSourceMySQL ( const CSphConfigSection & hSource, const char * 
 	LOC_GETS ( tParams.m_sSslCert,			"mysql_ssl_cert" );
 	LOC_GETS ( tParams.m_sSslCA,			"mysql_ssl_ca" );
 
-	CSphSource_MySQL * pSrcMySQL;
-#if USE_RLP
-	if ( bProxy )
-		pSrcMySQL = new CSphSource_Proxy<CSphSource_MySQL> ( sSourceName );
-	else
-#endif
-		pSrcMySQL = new CSphSource_MySQL ( sSourceName );
-
+	CSphSource_MySQL * pSrcMySQL = CreateSourceWithProxy<CSphSource_MySQL> ( sSourceName, bProxy );
 	if ( !pSrcMySQL->Setup ( tParams ) )
 		SafeDelete ( pSrcMySQL );
 
@@ -720,7 +706,7 @@ CSphSource * SpawnSourceMySQL ( const CSphConfigSection & hSource, const char * 
 
 
 #if USE_ODBC
-CSphSource * SpawnSourceODBC ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourceODBC ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="odbc" );
 
@@ -731,21 +717,14 @@ CSphSource * SpawnSourceODBC ( const CSphConfigSection & hSource, const char * s
 	LOC_GETS ( tParams.m_sOdbcDSN, "odbc_dsn" );
 	LOC_GETS ( tParams.m_sColBuffers, "sql_column_buffers" );
 
-	CSphSource_ODBC * pSrc;
-#if USE_RLP
-	if ( bProxy )
-		pSrc = new CSphSource_Proxy<CSphSource_ODBC> ( sSourceName );
-	else
-#endif
-	pSrc = new CSphSource_ODBC ( sSourceName );
-
+	CSphSource_ODBC * pSrc = CreateSourceWithProxy<CSphSource_ODBC> ( sSourceName, bProxy );
 	if ( !pSrc->Setup ( tParams ) )
 		SafeDelete ( pSrc );
 
 	return pSrc;
 }
 
-CSphSource * SpawnSourceMSSQL ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourceMSSQL ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="mssql" );
 
@@ -757,14 +736,7 @@ CSphSource * SpawnSourceMSSQL ( const CSphConfigSection & hSource, const char * 
 	LOC_GETS ( tParams.m_sColBuffers, "sql_column_buffers" );
 	LOC_GETS ( tParams.m_sOdbcDSN, "odbc_dsn" ); // a shortcut, may be used instead of other specific combination
 
-	CSphSource_MSSQL * pSrc;
-#if USE_RLP
-	if ( bProxy )
-		pSrc = new CSphSource_Proxy<CSphSource_MSSQL> ( sSourceName );
-	else
-#endif
-	pSrc = new CSphSource_MSSQL ( sSourceName );
-
+	CSphSource_MSSQL * pSrc = CreateSourceWithProxy<CSphSource_MSSQL> ( sSourceName, bProxy );
 	if ( !pSrc->Setup ( tParams ) )
 		SafeDelete ( pSrc );
 
@@ -773,7 +745,7 @@ CSphSource * SpawnSourceMSSQL ( const CSphConfigSection & hSource, const char * 
 #endif // USE_ODBC
 
 
-CSphSource * SpawnSourceXMLPipe ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourceXMLPipe ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="xmlpipe2" );
 
@@ -791,15 +763,8 @@ CSphSource * SpawnSourceXMLPipe ( const CSphConfigSection & hSource, const char 
 		return NULL;
 	}
 
-	CSphSource * pResult = NULL;
 	CSphString sError;
-
-#if USE_RLP
-	pResult = sphCreateSourceXmlpipe2 ( &hSource, pPipe, sSourceName, g_iMaxXmlpipe2Field, bProxy, sError );
-#else
-	pResult = sphCreateSourceXmlpipe2 ( &hSource, pPipe, sSourceName, g_iMaxXmlpipe2Field, false, sError );
-#endif // USE_RLP
-
+	CSphSource * pResult = sphCreateSourceXmlpipe2 ( &hSource, pPipe, sSourceName, g_iMaxXmlpipe2Field, bProxy, sError );
 	if ( !pResult )
 		fprintf ( stdout, "ERROR: xmlpipe: %s", sError.cstr() );
 
@@ -812,7 +777,7 @@ CSphSource * SpawnSourceXMLPipe ( const CSphConfigSection & hSource, const char 
 }
 
 
-CSphSource * SpawnSourceTSVPipe ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourceTSVPipe ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="tsvpipe" );
 
@@ -829,15 +794,11 @@ CSphSource * SpawnSourceTSVPipe ( const CSphConfigSection & hSource, const char 
 		return NULL;
 	}
 
-#if USE_RLP
 	return sphCreateSourceTSVpipe ( &hSource, pPipe, sSourceName, bProxy );
-#else
-	return sphCreateSourceTSVpipe ( &hSource, pPipe, sSourceName, false );
-#endif
 }
 
 
-CSphSource * SpawnSourceCSVPipe ( const CSphConfigSection & hSource, const char * sSourceName, bool RLPARG(bProxy) )
+CSphSource * SpawnSourceCSVPipe ( const CSphConfigSection & hSource, const char * sSourceName, bool bProxy )
 {
 	assert ( hSource["type"]=="csvpipe" );
 
@@ -854,11 +815,7 @@ CSphSource * SpawnSourceCSVPipe ( const CSphConfigSection & hSource, const char 
 		return NULL;
 	}
 
-#if USE_RLP
 	return sphCreateSourceCSVpipe ( &hSource, pPipe, sSourceName, bProxy );
-#else
-	return sphCreateSourceCSVpipe ( &hSource, pPipe, sSourceName, false );
-#endif
 }
 
 
@@ -1030,21 +987,16 @@ bool DoIndex ( const CSphConfigSection & hIndex, const char * sIndexName,
 		if ( tSettings.m_uAotFilterMask )
 			pTokenizer = sphAotCreateFilter ( pTokenizer, pDict, tSettings.m_bIndexExactWords, tSettings.m_uAotFilterMask );
 	}
-#if USE_RLP
-	if ( tSettings.m_eChineseRLP==SPH_RLP_BATCHED )
-		pTokenizer = ISphTokenizer::CreateRLPResultSplitter ( pTokenizer, tSettings.m_sRLPContext.cstr() );
-	else
-		pTokenizer = ISphTokenizer::CreateRLPFilter ( pTokenizer, tSettings.m_eChineseRLP!=SPH_RLP_NONE, g_sRLPRoot.cstr(), g_sRLPEnv.cstr(), tSettings.m_sRLPContext.cstr(), true, sError );
-
-	if ( !pTokenizer )
-		sphDie ( "index '%s': %s", sIndexName, sError.cstr() );
-#endif
 
 	ISphFieldFilter * pFieldFilter = NULL;
 	CSphFieldFilterSettings tFilterSettings;
 	if ( sphConfFieldFilter ( hIndex, tFilterSettings, sError ) )
+		pFieldFilter = sphCreateRegexpFilter ( tFilterSettings, sError );
+
+	if ( !sphSpawnRLPFilter ( pFieldFilter, tSettings, tTokSettings, sIndexName, sError ) )
 	{
-		pFieldFilter = sphCreateFieldFilter ( tFilterSettings, sError );
+		SafeDelete ( pFieldFilter );
+		sphDie ( "%s", sError.cstr() );
 	}
 
 	if ( !sError.IsEmpty () )
@@ -1143,6 +1095,8 @@ bool DoIndex ( const CSphConfigSection & hIndex, const char * sIndexName,
 	if ( bSpawnFailed )
 	{
 		fprintf ( stdout, "ERROR: index '%s': failed to configure some of the sources, will not index.\n", sIndexName );
+		SafeDelete ( pDict );
+		SafeDelete ( pTokenizer );
 		return false;
 	}
 
@@ -1257,7 +1211,12 @@ bool DoIndex ( const CSphConfigSection & hIndex, const char * sIndexName,
 		pIndex->SetTokenizer ( pTokenizer );
 		pIndex->SetDictionary ( pDict );
 		if ( g_bKeepAttrs )
-			pIndex->SetKeepAttrs ( hIndex["path"].strval() );
+		{
+			if ( g_sKeepAttrsPath.IsEmpty() )
+				pIndex->SetKeepAttrs ( hIndex["path"].strval(), g_dKeepAttrs );
+			else
+				pIndex->SetKeepAttrs ( g_sKeepAttrsPath, g_dKeepAttrs );
+		}
 		pIndex->Setup ( tSettings );
 
 		bOK = pIndex->Build ( dSources, g_iMemLimit, g_iWriteBuffer )!=0;
@@ -1353,16 +1312,19 @@ bool DoMerge ( const CSphConfigSection & hDst, const char * sDst,
 		return false;
 	}
 
-	if ( !pSrc->Lock() && !bRotate )
+	if ( !bRotate )
 	{
-		fprintf ( stdout, "ERROR: index '%s' is already locked; lock: %s\n", sSrc, pSrc->GetLastError().cstr() );
-		return false;
-	}
+		if ( !pSrc->Lock() )
+		{
+			fprintf ( stdout, "ERROR: index '%s' is already locked; lock: %s\n", sSrc, pSrc->GetLastError().cstr() );
+			return false;
+		}
 
-	if ( !pDst->Lock() && !bRotate )
-	{
-		fprintf ( stdout, "ERROR: index '%s' is already locked; lock: %s\n", sDst, pDst->GetLastError().cstr() );
-		return false;
+		if ( !pDst->Lock() )
+		{
+			fprintf ( stdout, "ERROR: index '%s' is already locked; lock: %s\n", sDst, pDst->GetLastError().cstr() );
+			return false;
+		}
 	}
 
 	pDst->SetProgressCallback ( ShowProgress );
@@ -1376,54 +1338,34 @@ bool DoMerge ( const CSphConfigSection & hDst, const char * sDst,
 	if ( !g_bQuiet )
 		printf ( "merged in %d.%03d sec\n", (int)(tmMergeTime/1000000), (int)(tmMergeTime%1000000)/1000 );
 
+	// need to close attribute files that was mapped with RW access to unlink and rename them on windows
+	pSrc->Dealloc();
+	pDst->Dealloc();
+
 	// pick up merge result
 	const char * sPath = hDst["path"].cstr();
 	char sFrom [ SPH_MAX_FILENAME_LEN ];
 	char sTo [ SPH_MAX_FILENAME_LEN ];
-	struct stat tFileInfo;
 
-	int iExt;
-	for ( iExt=0; iExt<EXT_COUNT; iExt++ )
-	{
-		snprintf ( sFrom, sizeof(sFrom), "%s.tmp.%s", sPath, g_dExt[iExt] );
-		sFrom [ sizeof(sFrom)-1 ] = '\0';
+	snprintf ( sFrom, sizeof(sFrom), "%s.tmp", sPath );
+	sFrom [ sizeof(sFrom)-1 ] = '\0';
+	if ( bRotate )
+		snprintf ( sTo, sizeof(sTo), "%s.new", sPath );
+	else
+		snprintf ( sTo, sizeof(sTo), "%s", sPath );
+	sTo [ sizeof(sTo)-1 ] = '\0';
 
-		if ( bRotate )
-			snprintf ( sTo, sizeof(sTo), "%s.new.%s", sPath, g_dExt[iExt] );
-		else
-			snprintf ( sTo, sizeof(sTo), "%s.%s", sPath, g_dExt[iExt] );
+	pDst->SetBase ( sFrom );
+	bool bRenamed = pDst->Rename ( sTo );
 
-		sTo [ sizeof(sTo)-1 ] = '\0';
-
-		if ( !stat ( sTo, &tFileInfo ) )
-		{
-			if ( remove ( sTo ) )
-			{
-				fprintf ( stdout, "ERROR: index '%s': failed to delete '%s': %s",
-					sDst, sTo, strerror(errno) );
-				break;
-			}
-		}
-
-		if ( rename ( sFrom, sTo ) )
-		{
-			fprintf ( stdout, "ERROR: index '%s': failed to rename '%s' to '%s': %s",
-				sDst, sFrom, sTo, strerror(errno) );
-			break;
-		}
-	}
-
-	if ( !bRotate )
-	{
-		pSrc->Unlock();
-		pDst->Unlock();
-	}
+	if ( !bRenamed )
+		fprintf ( stdout, "ERROR: index '%s': failed to rename '%s' to '%s': %s", sDst, sFrom, sTo, pDst->GetLastError().cstr() );
 
 	SafeDelete ( pSrc );
 	SafeDelete ( pDst );
 
 	// all good?
-	return ( iExt==EXT_COUNT );
+	return bRenamed;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1729,8 +1671,20 @@ int main ( int argc, char ** argv )
 		{
 			g_bPrintQueries = true;
 
-		} else if ( strcasecmp ( argv[i], "--keep-attrs" )==0 )
+		} else if ( strcasecmp ( argv[i], "--keep-attrs" )>=0 )
 		{
+			CSphString sArg ( argv[i] );
+			if ( sArg.Begins ( "--keep-attrs=" ) )
+			{
+				int iKeyLen = sizeof ( "--keep-attrs=" )-1;
+				g_sKeepAttrsPath = sArg.cstr() + iKeyLen;
+			}
+			if ( sArg.Begins ( "--keep-attrs-names=" ) )
+			{
+				int iKeyLen = sizeof ( "--keep-attrs-names=" )-1;
+				sphSplit ( g_dKeepAttrs, sArg.cstr() + iKeyLen, "," );
+			}
+
 			g_bKeepAttrs = true;
 
 		} else

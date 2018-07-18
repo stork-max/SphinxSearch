@@ -181,6 +181,29 @@ public:
 };
 
 
+class CSphScopedProfile
+{
+private:
+	CSphQueryProfile *	m_pProfile;
+	ESphQueryState		m_eOldState;
+
+public:
+	explicit CSphScopedProfile ( CSphQueryProfile * pProfile, ESphQueryState eNewState )
+	{
+		m_pProfile = pProfile;
+		m_eOldState = SPH_QSTATE_UNKNOWN;
+		if ( m_pProfile )
+			m_eOldState = m_pProfile->Switch ( eNewState );
+	}
+
+	~CSphScopedProfile()
+	{
+		if ( m_pProfile )
+			m_pProfile->Switch ( m_eOldState );
+	}
+};
+
+
 /// file writer with write buffering and int encoder
 class CSphWriter : ISphNoncopyable
 {
@@ -410,13 +433,20 @@ class ISphRanker;
 class ISphMatchSorter;
 class UservarIntSet_c;
 
+enum QueryDebug_e
+{
+	QUERY_DEBUG_NO_PAYLOAD = 1<<0
+};
+
 
 /// per-query search context
 /// everything that index needs to compute/create to process the query
-class CSphQueryContext
+class CSphQueryContext : public ISphNoncopyable
 {
 public:
 	// searching-only, per-query
+	const CSphQuery &			m_tQuery;
+
 	int							m_iWeights;						///< search query field weights count
 	int							m_dWeights [ SPH_MAX_FIELDS ];	///< search query field weights
 
@@ -437,7 +467,6 @@ public:
 	CSphVector<CalcItem_t>		m_dCalcFilter;			///< items to compute for filtering
 	CSphVector<CalcItem_t>		m_dCalcSort;			///< items to compute for sorting/grouping
 	CSphVector<CalcItem_t>		m_dCalcFinal;			///< items to compute when finalizing result set
-	CSphVector<CalcItem_t>		m_dCalcPostAggregate;	///< items to compute aggregate depended with finalized result set
 
 	const CSphVector<CSphAttrOverride> *	m_pOverrides;		///< overridden attribute values
 	CSphVector<CSphAttrLocator>				m_dOverrideIn;
@@ -450,22 +479,20 @@ public:
 	int64_t									m_iBadRows;
 
 public:
-	CSphQueryContext ();
+	explicit CSphQueryContext ( const CSphQuery & q );
 	~CSphQueryContext ();
 
 	void						BindWeights ( const CSphQuery * pQuery, const CSphSchema & tSchema, CSphString & sWarning );
-	bool						SetupCalc ( CSphQueryResult * pResult, const ISphSchema & tInSchema, const CSphSchema & tSchema, const DWORD * pMvaPool, bool bArenaProhibit, bool bExtractPostAggr );
-	bool						CreateFilters ( bool bFullscan, const CSphVector<CSphFilterSettings> * pdFilters, const ISphSchema & tSchema, const DWORD * pMvaPool, const BYTE * pStrings, CSphString & sError, ESphCollation eCollation, bool bArenaProhibit, const KillListVector & dKillList );
+	bool						SetupCalc ( CSphQueryResult * pResult, const ISphSchema & tInSchema, const CSphSchema & tSchema, const DWORD * pMvaPool, bool bArenaProhibit );
+	bool						CreateFilters ( bool bFullscan, const CSphVector<CSphFilterSettings> * pdFilters, const ISphSchema & tSchema, const DWORD * pMvaPool, const BYTE * pStrings, CSphString & sError, CSphString & sWarning, ESphCollation eCollation, bool bArenaProhibit, const KillListVector & dKillList );
 	bool						SetupOverrides ( const CSphQuery * pQuery, CSphQueryResult * pResult, const CSphSchema & tIndexSchema, const ISphSchema & tOutgoingSchema );
 
 	void						CalcFilter ( CSphMatch & tMatch ) const;
 	void						CalcSort ( CSphMatch & tMatch ) const;
 	void						CalcFinal ( CSphMatch & tMatch ) const;
-	void						CalcPostAggregate ( CSphMatch & tMatch ) const;
 
 	void						FreeStrFilter ( CSphMatch & tMatch ) const;
 	void						FreeStrSort ( CSphMatch & tMatch ) const;
-	void						FreeStrFinal ( CSphMatch & tMatch ) const;
 
 	// note that RT index bind pools at segment searching, not at time it setups context
 	void						ExprCommand ( ESphExprCommand eCmd, void * pArg );
@@ -584,7 +611,7 @@ private:
 	DWORD						m_uElements;	// counts total number of collected min/max pairs
 	int							m_iLoop;		// loop inside one set
 	DWORD *						m_pOutBuffer;	// storage for collected min/max
-	DWORD *						m_pOutMax;		// storage max for bound checking
+	DWORD const *				m_pOutMax;		// storage max for bound checking
 	DOCID						m_uStart;		// first and last docids of current chunk
 	DOCID						m_uLast;
 	DOCID						m_uIndexStart;	// first and last docids of whole index
@@ -601,7 +628,7 @@ private:
 public:
 	explicit AttrIndexBuilder_t ( const CSphSchema & tSchema );
 
-	void Prepare ( DWORD * pOutBuffer, DWORD * pOutMax );
+	void Prepare ( DWORD * pOutBuffer, const DWORD * pOutMax );
 
 	bool Collect ( const DWORD * pCur, const DWORD * pMvas, int64_t iMvasCount, CSphString & sError, bool bHasMvaID );
 
@@ -777,7 +804,7 @@ AttrIndexBuilder_t<DOCID>::AttrIndexBuilder_t ( const CSphSchema & tSchema )
 }
 
 template < typename DOCID >
-void AttrIndexBuilder_t<DOCID>::Prepare ( DWORD * pOutBuffer, DWORD * pOutMax )
+void AttrIndexBuilder_t<DOCID>::Prepare ( DWORD * pOutBuffer, const DWORD * pOutMax )
 {
 	m_pOutBuffer = pOutBuffer;
 	m_pOutMax = pOutMax;
@@ -945,6 +972,27 @@ struct PoolPtrs_t
 		, m_pStrings ( NULL )
 		, m_bArenaProhibit ( false )
 	{}
+};
+
+class CSphTaggedVector
+{
+public:
+	const PoolPtrs_t & operator [] ( int iTag ) const
+	{
+		return m_dPool [ iTag & 0x7FFFFFF ];
+	}
+	PoolPtrs_t & operator [] ( int iTag )
+	{
+		return m_dPool [ iTag & 0x7FFFFFF ];
+	}
+
+	void Resize ( int iSize )
+	{
+		m_dPool.Resize ( iSize );
+	}
+
+private:
+	CSphVector<PoolPtrs_t> m_dPool;
 };
 
 class CSphFreeList
@@ -1476,6 +1524,7 @@ inline void SqlUnescape ( CSphString & sRes, const char * sEscaped, int iLen )
 			case 'n': *d++ = '\n'; break;
 			case 'r': *d++ = '\r'; break;
 			case 't': *d++ = '\t'; break;
+			case '0': *d++ = ' '; break;
 			default:
 				*d++ = s[1];
 			}
@@ -1548,7 +1597,6 @@ public:
 
 	virtual bool		IsStopWord ( const BYTE * pWord ) const { return m_pDict->IsStopWord ( pWord ); }
 	virtual uint64_t	GetSettingsFNV () const { return m_pDict->GetSettingsFNV(); }
-	virtual void		SetApplyMorph ( bool bApply ) { m_pDict->SetApplyMorph ( bApply ); }
 
 protected:
 	CSphDict *			m_pDict;
@@ -1586,6 +1634,7 @@ class CSphDictExact : public CSphDictTraits
 public:
 	explicit CSphDictExact ( CSphDict * pDict ) : CSphDictTraits ( pDict ) {}
 	virtual SphWordID_t	GetWordID ( BYTE * pWord );
+	virtual SphWordID_t GetWordIDNonStemmed ( BYTE * pWord ) { return m_pDict->GetWordIDNonStemmed ( pWord ); }
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -1631,24 +1680,8 @@ public:
 	virtual void					SetBuffer ( const BYTE * sBuffer, int iLength )	{ m_pTokenizer->SetBuffer ( sBuffer, iLength ); }
 	virtual BYTE *					GetToken ()										{ return m_pTokenizer->GetToken(); }
 
-	virtual ISphTokenizer *			GetEmbeddedTokenizer () const					{ return m_pTokenizer; }
 	virtual bool					WasTokenMultiformDestination ( bool & bHead, int & iDestCount ) const { return m_pTokenizer->WasTokenMultiformDestination ( bHead, iDestCount ); }
 };
-
-
-struct ISphQueryFilter
-{
-	ISphTokenizer *		m_pTokenizer;
-	CSphDict *					m_pDict;
-	const CSphIndexSettings *	m_pSettings;
-
-	ISphQueryFilter ();
-	virtual ~ISphQueryFilter ();
-
-	void GetKeywords ( CSphVector <CSphKeywordInfo> & dKeywords );
-	virtual void AddKeywordStats ( BYTE * sWord, const BYTE * sTokenized, int iQpos, CSphVector <CSphKeywordInfo> & dKeywords ) = 0;
-};
-
 
 DWORD sphParseMorphAot ( const char * );
 
@@ -1657,6 +1690,7 @@ struct CSphReconfigureSettings
 	CSphTokenizerSettings	m_tTokenizer;
 	CSphDictSettings		m_tDict;
 	CSphIndexSettings		m_tIndex;
+	CSphFieldFilterSettings m_tFieldFilter;
 };
 
 struct CSphReconfigureSetup
@@ -1664,6 +1698,7 @@ struct CSphReconfigureSetup
 	ISphTokenizer *		m_pTokenizer;
 	CSphDict *			m_pDict;
 	CSphIndexSettings	m_tIndex;
+	ISphFieldFilter *	m_pFieldFilter;
 
 	CSphReconfigureSetup ();
 	~CSphReconfigureSetup ();
@@ -1743,10 +1778,14 @@ void			SaveTokenizerSettings ( CSphWriter & tWriter, ISphTokenizer * pTokenizer,
 bool			LoadTokenizerSettings ( CSphReader & tReader, CSphTokenizerSettings & tSettings, CSphEmbeddedFiles & tEmbeddedFiles, DWORD uVersion, CSphString & sWarning );
 void			SaveDictionarySettings ( CSphWriter & tWriter, CSphDict * pDict, bool bForceWordDict, int iEmbeddedLimit );
 void			LoadDictionarySettings ( CSphReader & tReader, CSphDictSettings & tSettings, CSphEmbeddedFiles & tEmbeddedFiles, DWORD uVersion, CSphString & sWarning );
+void			LoadFieldFilterSettings ( CSphReader & tReader, CSphFieldFilterSettings & tFieldFilterSettings );
 void			SaveFieldFilterSettings ( CSphWriter & tWriter, ISphFieldFilter * pFieldFilter );
 
 DWORD			ReadVersion ( const char * sPath, CSphString & sError );
 bool			AddFieldLens ( CSphSchema & tSchema, bool bDynamic, CSphString & sError );
+
+/// Get current thread local index - internal do not use
+ISphRtIndex * sphGetCurrentIndexRT();
 
 void			RebalanceWeights ( const CSphFixedVector<int64_t> & dTimers, WORD * pWeights );
 
@@ -1807,30 +1846,35 @@ int sphCheckpointCmpStrictly ( const char * sWord, int iLen, SphWordID_t iWordID
 	return iRes;
 }
 
-
 template < typename CP >
+struct SphCheckpointAccess_fn
+{
+	const CP & operator () ( const CP * pCheckpoint ) const { return *pCheckpoint; }
+};
+
+template < typename CP, typename PRED >
 const CP * sphSearchCheckpoint ( const char * sWord, int iWordLen, SphWordID_t iWordID
 							, bool bStarMode, bool bWordDict
-							, const CP * pFirstCP, const CP * pLastCP )
+							, const CP * pFirstCP, const CP * pLastCP, const PRED & tPred )
 {
 	assert ( !bWordDict || iWordLen>0 );
 
 	const CP * pStart = pFirstCP;
 	const CP * pEnd = pLastCP;
 
-	if ( bStarMode && sphCheckpointCmp ( sWord, iWordLen, iWordID, bWordDict, *pStart )<0 )
+	if ( bStarMode && sphCheckpointCmp ( sWord, iWordLen, iWordID, bWordDict, tPred ( pStart ) )<0 )
 		return NULL;
-	if ( !bStarMode && sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, *pStart )<0 )
+	if ( !bStarMode && sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, tPred ( pStart ) )<0 )
 		return NULL;
 
-	if ( sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, *pEnd )>=0 )
+	if ( sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, tPred ( pEnd ) )>=0 )
 		pStart = pEnd;
 	else
 	{
 		while ( pEnd-pStart>1 )
 		{
 			const CP * pMid = pStart + (pEnd-pStart)/2;
-			const int iCmpRes = sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, *pMid );
+			const int iCmpRes = sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, tPred ( pMid ) );
 
 			if ( iCmpRes==0 )
 			{
@@ -1844,12 +1888,19 @@ const CP * sphSearchCheckpoint ( const char * sWord, int iWordLen, SphWordID_t i
 
 		assert ( pStart>=pFirstCP );
 		assert ( pStart<=pLastCP );
-		assert ( sphCheckpointCmp ( sWord, iWordLen, iWordID, bWordDict, *pStart )>=0
-			&& sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, *pEnd )<0 );
+		assert ( sphCheckpointCmp ( sWord, iWordLen, iWordID, bWordDict, tPred ( pStart ) )>=0
+			&& sphCheckpointCmpStrictly ( sWord, iWordLen, iWordID, bWordDict, tPred ( pEnd ) )<0 );
 	}
 
 	return pStart;
 }
+
+template < typename CP >
+const CP * sphSearchCheckpoint ( const char * sWord, int iWordLen, SphWordID_t iWordID, bool bStarMode, bool bWordDict , const CP * pFirstCP, const CP * pLastCP )
+{
+	return sphSearchCheckpoint ( sWord, iWordLen, iWordID, bStarMode, bWordDict, pFirstCP, pLastCP, SphCheckpointAccess_fn<CP>() );
+}
+
 
 int sphCollateLibcCI ( const BYTE * pStr1, const BYTE * pStr2, bool bPacked );
 int sphCollateLibcCS ( const BYTE * pStr1, const BYTE * pStr2, bool bPacked );
@@ -1882,6 +1933,104 @@ struct ISphSubstringPayload
 	ISphSubstringPayload () {}
 	virtual ~ISphSubstringPayload() {}
 };
+
+
+void sphBuildNGrams ( const char * sWord, int iLen, char cDelimiter, CSphVector<char> & dNgrams );
+
+// levenstein distance for words
+int sphLevenshtein ( const char * sWord1, int iLen1, const char * sWord2, int iLen2 );
+
+// levenstein distance for unicode codepoints
+int sphLevenshtein ( const int * sWord1, int iLen1, const int * sWord2, int iLen2 );
+
+struct Slice_t
+{
+	DWORD				m_uOff;
+	DWORD				m_uLen;
+};
+
+struct SuggestWord_t
+{
+	int	m_iNameOff;
+	int m_iLen;
+	int m_iDistance;
+	int m_iDocs;
+	DWORD m_iNameHash;
+};
+
+struct SuggestArgs_t
+{
+	int				m_iLimit;			// limit into result set
+	int				m_iMaxEdits;		// levenstein distance threshold
+	int				m_iDeltaLen;		// filter out words from dictionary these shorter \ longer then reference word
+	int				m_iQueueLen;
+	int				m_iRejectThr;
+	bool			m_bQueryMode;
+
+	bool			m_bResultOneline;
+	bool			m_bResultStats;
+
+	SuggestArgs_t () : m_iLimit ( 5 ), m_iMaxEdits ( 4 ), m_iDeltaLen ( 3 ), m_iQueueLen ( 25 ), m_iRejectThr ( 4 ), m_bQueryMode ( false ), m_bResultOneline ( false ), m_bResultStats ( true )
+	{}
+};
+
+struct SuggestResult_t
+{
+	// result set
+	CSphVector<BYTE>			m_dBuf;
+	CSphVector<SuggestWord_t>	m_dMatched;
+
+	// state
+	CSphVector<char>			m_dTrigrams;
+	// payload
+	void *						m_pWordReader;
+	void *						m_pSegments;
+	bool						m_bMergeWords;
+	// word
+	CSphString		m_sWord;
+	int				m_iLen;
+	int				m_dCodepoints[SPH_MAX_WORD_LEN];
+	int				m_iCodepoints;
+	bool			m_bUtf8;
+	bool			m_bHasExactDict;
+
+	SuggestResult_t () : m_pWordReader ( NULL ), m_pSegments ( NULL ), m_bMergeWords ( false ), m_iLen ( 0 ), m_iCodepoints ( 0 ), m_bUtf8 ( false ), m_bHasExactDict ( false )
+	{
+		m_dBuf.Reserve ( 8096 );
+		m_dMatched.Reserve ( 512 );
+	}
+
+	~SuggestResult_t ()
+	{
+		assert ( !m_pWordReader );
+		assert ( !m_pSegments );
+	}
+
+	bool SetWord ( const char * sWord, const ISphTokenizer * pTok, bool bUseLastWord );
+
+	void Flattern ( int iLimit );
+};
+
+class ISphWordlistSuggest
+{
+public:
+	virtual ~ISphWordlistSuggest () {}
+
+	virtual void SuffixGetChekpoints ( const SuggestResult_t & tRes, const char * sSuffix, int iLen, CSphVector<DWORD> & dCheckpoints ) const = 0;
+
+	virtual void SetCheckpoint ( SuggestResult_t & tRes, DWORD iCP ) const = 0;
+
+	struct DictWord_t
+	{
+		const char *	m_sWord;
+		int				m_iLen;
+		int				m_iDocs;
+	};
+
+	virtual bool ReadNextWord ( SuggestResult_t & tRes, DictWord_t & tWord ) const = 0;
+};
+
+void sphGetSuggest ( const ISphWordlistSuggest * pWordlist, int iInfixCodepointBytes, const SuggestArgs_t & tArgs, SuggestResult_t & tRes );
 
 
 class ISphWordlist
@@ -1949,6 +2098,31 @@ struct ExpansionContext_t
 };
 
 
+struct GetKeywordsSettings_t
+{
+	bool	m_bStats;
+	bool	m_bFoldLemmas;
+	bool	m_bFoldBlended;
+	bool	m_bFoldWildcards;
+	int		m_iExpansionLimit;
+
+	GetKeywordsSettings_t ();
+};
+
+struct ISphQueryFilter
+{
+	ISphTokenizer *				m_pTokenizer;
+	CSphDict *					m_pDict;
+	const CSphIndexSettings *	m_pSettings;
+	GetKeywordsSettings_t		m_tFoldSettings;
+
+	ISphQueryFilter ();
+	virtual ~ISphQueryFilter ();
+
+	void GetKeywords ( CSphVector <CSphKeywordInfo> & dKeywords, const ExpansionContext_t & tCtx );
+	virtual void AddKeywordStats ( BYTE * sWord, const BYTE * sTokenized, int iQpos, CSphVector <CSphKeywordInfo> & dKeywords ) = 0;
+};
+
 XQNode_t * sphExpandXQNode ( XQNode_t * pNode, ExpansionContext_t & tCtx );
 XQNode_t * sphQueryExpandKeywords ( XQNode_t * pNode, const CSphIndexSettings & tSettings );
 inline int sphGetExpansionMagic ( int iDocs, int iHits )
@@ -1959,6 +2133,8 @@ inline bool sphIsExpandedPayload ( int iDocs, int iHits )
 {
 	return ( iHits<=256 || iDocs<32 ); // magic threshold; mb make this configurable?
 }
+bool sphHasExpandableWildcards ( const char * sWord );
+bool sphExpandGetWords ( const char * sWord, const ExpansionContext_t & tCtx, ISphWordlist::Args_t & tWordlist );
 
 
 template<typename T>
@@ -2063,7 +2239,7 @@ public:
 
 
 ISphInfixBuilder * sphCreateInfixBuilder ( int iCodepointBytes, CSphString * pError );
-bool sphLookupInfixCheckpoints ( const char * sInfix, int iBytes, const BYTE * pInfixes, const CSphVector<InfixBlock_t> & dInfixBlocks, int iInfixCodepointBytes, CSphVector<int> & dCheckpoints );
+bool sphLookupInfixCheckpoints ( const char * sInfix, int iBytes, const BYTE * pInfixes, const CSphVector<InfixBlock_t> & dInfixBlocks, int iInfixCodepointBytes, CSphVector<DWORD> & dCheckpoints );
 // calculate length, upto iInfixCodepointBytes chars from infix start
 int sphGetInfixLength ( const char * sInfix, int iBytes, int iInfixCodepointBytes );
 
@@ -2265,6 +2441,29 @@ public:
 	}
 };
 
+/// parser to build lowercaser from textual config
+class CSphCharsetDefinitionParser
+{
+public:
+	CSphCharsetDefinitionParser () : m_bError ( false ) {}
+	bool				Parse ( const char * sConfig, CSphVector<CSphRemapRange> & dRanges );
+	const char *		GetLastError ();
+
+protected:
+	bool				m_bError;
+	char				m_sError [ 1024 ];
+	const char *		m_pCurrent;
+
+	bool				Error ( const char * sMessage );
+	void				SkipSpaces ();
+	bool				IsEof ();
+	bool				CheckEof ();
+	int					HexDigit ( int c );
+	int					ParseCharsetCode ();
+	bool				AddRange ( const CSphRemapRange & tRange, CSphVector<CSphRemapRange> & dRanges );
+};
+
+
 struct StoredToken_t
 {
 	BYTE			m_sToken [3*SPH_MAX_WORD_LEN+4];
@@ -2285,6 +2484,10 @@ void FillStoredTokenInfo ( StoredToken_t & tToken, const BYTE * sToken, ISphToke
 CSphSource * sphCreateSourceTSVpipe ( const CSphConfigSection * pSource, FILE * pPipe, const char * sSourceName, bool bProxy );
 CSphSource * sphCreateSourceCSVpipe ( const CSphConfigSection * pSource, FILE * pPipe, const char * sSourceName, bool bProxy );
 
+uint64_t sphCalcLocatorHash ( const CSphAttrLocator & tLoc, uint64_t uPrevHash );
+uint64_t sphCalcExprDepHash ( const char * szTag, ISphExpr * pExpr, const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable );
+uint64_t sphCalcExprDepHash ( ISphExpr * pExpr, const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable );
+
 inline void FlipEndianess ( DWORD* pData )
 {
 	BYTE* pB = (BYTE*)pData;
@@ -2295,428 +2498,6 @@ inline void FlipEndianess ( DWORD* pData )
 	pB[1] = pB[2];
 	pB[2] = a;
 };
-
-
-#if USE_RLP
-#define RLPARG(_arg) _arg
-#else
-#define RLPARG(_arg)
-#endif
-
-
-#if USE_RLP
-
-struct StoredDoc_t
-{
-	CSphMatch							m_tDocInfo;
-	CSphVector<CSphString>				m_dStrAttrs;
-	CSphVector<DWORD>					m_dMva;
-	CSphTightVector<BYTE*>				m_dFields;
-	CSphTightVector<bool>				m_dChinese;
-	CSphTightVector< CSphVector<BYTE> >	m_dFieldStorage;
-	CSphTightVector< StoredToken_t >	m_dNonChineseTokens;
-};
-
-// these are used to separate text before passing it to RLP
-const int PROXY_DOCUMENT_START = 0xFFFA;
-const int PROXY_FIELD_START_CHINESE = 0xFFFB;
-const int PROXY_FIELD_START_NONCHINESE = 0xFFFC;
-const int PROXY_TOKEN_SEPARATOR = 0xFFFD;
-
-// these are used on text that is already tokenized
-const int PROXY_TOKENIZED = 0xFFFA;
-const int PROXY_MORPH = 0xFFFB;
-
-const int PROXY_MARKER_LEN = 3;
-
-enum
-{
-	PROXY_BOUNDARY_FLAG		= 1<<7, //NOLINT
-	PROXY_SPECIAL_FLAG		= 1<<8, //NOLINT
-	PROXY_BLENDED_FLAG		= 1<<9, //NOLINT
-	PROXY_BLENDED_PART_FLAG	= 1<<10, //NOLINT
-	PROXY_HAVE_OVERSHORT	= 1<<11 //NOLINT
-};
-
-
-#define COPY_MARKER(_ptr,_marker) \
-{\
-	*_ptr++ = _marker[0]; \
-	*_ptr++ = _marker[1]; \
-	*_ptr++ = _marker[2]; \
-}
-
-#define CMP_MARKER(_ptr, _marker) \
-	( _ptr[0]==_marker[0] && _ptr[1]==_marker[1] && _ptr[2]==_marker[2] )
-
-// proxy source
-template <class T>
-class CSphSource_Proxy : public T
-{
-public:
-	explicit CSphSource_Proxy ( const char * sSourceName )
-		: T ( sSourceName )
-		, m_dBatchedDocs ( g_iRLPMaxBatchDocs )
-		, m_iDocStart ( 0 )
-		, m_iDocCount ( 0 )
-		, m_pExtraTokenizer ( NULL )
-		, m_pProxyStripper ( NULL )
-	{
-		assert ( sphUTF8Encode ( m_pMarkerDocStart, PROXY_DOCUMENT_START )==PROXY_MARKER_LEN );
-
-		sphUTF8Encode ( m_pMarkerDocStart, PROXY_DOCUMENT_START );
-		sphUTF8Encode ( m_pMarkerChineseField, PROXY_FIELD_START_CHINESE );
-		sphUTF8Encode ( m_pMarkerNonChineseField, PROXY_FIELD_START_NONCHINESE );
-		sphUTF8Encode ( m_pMarkerTokenSeparator, PROXY_TOKEN_SEPARATOR );
-
-		sphUTF8Encode ( m_pMarkerTokenized, PROXY_TOKENIZED );
-		sphUTF8Encode ( m_pMarkerMorph, PROXY_MORPH );
-
-		const int INITIAL_BUFFER_SIZE = 1048576;
-		m_dDocBuffer.Reserve ( INITIAL_BUFFER_SIZE );
-	}
-
-	virtual ~CSphSource_Proxy()
-	{
-		SafeDelete ( m_pExtraTokenizer );
-		SafeDelete ( m_pProxyStripper );
-	}
-
-	void AppendToField ( StoredDoc_t * pCurDoc, int iField, BYTE * pToken, int iTokenLen, BYTE * pMarker )
-	{
-		assert ( pCurDoc && iField>=0 );
-		CSphVector<BYTE> & tStorage = pCurDoc->m_dFieldStorage[iField];
-
-		int iNewSize, iOldSize;
-		iNewSize = iOldSize = tStorage.GetLength();
-		if ( !iNewSize )
-			iNewSize += PROXY_MARKER_LEN + 1;	// tokenized field marker + trailing zero
-
-		iNewSize += iTokenLen+1;				// space before each token + token
-
-		if ( pMarker )
-			iNewSize += PROXY_MARKER_LEN;		// non-chinese token marker
-
-		tStorage.Resize ( iNewSize );
-		BYTE * pPtr = tStorage.Begin() + ( iOldSize ? iOldSize-1 : 0 );
-
-		if ( !iOldSize )
-		{
-			memcpy ( pPtr, m_pMarkerTokenized, PROXY_MARKER_LEN );
-			pPtr += PROXY_MARKER_LEN;
-		}
-
-		*pPtr++ = ' ';
-
-		if ( pMarker )
-			COPY_MARKER ( pPtr, pMarker );
-
-		memcpy ( pPtr, pToken, iTokenLen+1 );
-		pCurDoc->m_dFields[iField] = tStorage.Begin();
-	}
-
-	virtual BYTE ** NextDocument ( CSphString & sError )
-	{
-		ISphTokenizer * pEmbeddedTokenizer = T::m_pTokenizer->GetEmbeddedTokenizer();
-		assert ( pEmbeddedTokenizer );
-
-		// do not run the stripper twice
-		if ( CSphSource_Proxy<T>::m_pStripper )
-		{
-			m_pProxyStripper = CSphSource_Proxy<T>::m_pStripper;
-			CSphSource_Proxy<T>::m_pStripper = NULL;
-		}
-
-		if ( !m_pExtraTokenizer )
-		{
-			m_pExtraTokenizer = ISphTokenizer::CreateRLPFilter ( pEmbeddedTokenizer->Clone ( SPH_CLONE_INDEX ), true, g_sRLPRoot.cstr(),
-				g_sRLPEnv.cstr(), T::m_pTokenizer->GetRLPContext(), false, sError );
-			if ( !m_pExtraTokenizer )
-				return NULL;
-		}
-
-		if ( !IsDocCacheEmpty() )
-			return CopyDoc();
-
-		if ( m_dFieldLengths.GetLength()!=T::m_tSchema.m_dFields.GetLength() )
-			m_dFieldLengths.Resize ( T::m_tSchema.m_dFields.GetLength() );
-
-		char szTmp [256];
-
-		m_iDocStart = 0;
-		int iCurDoc = 0;
-
-		m_dDocBuffer.Resize(0);
-
-		while ( !IsDocCacheFull() && m_dDocBuffer.GetLength() < g_iRLPMaxBatchSize )
-		{
-			BYTE ** pFields = T::NextDocument ( sError );
-			if ( !pFields )
-				break;
-
-			int iTotalFieldLen = 0;
-			for ( int i = 0; i < T::m_tSchema.m_dFields.GetLength(); i++ )
-			{
-				m_dFieldLengths[i] = pFields[i] ? strlen ( (const char*)pFields[i] ) : 0;
-				iTotalFieldLen += PROXY_MARKER_LEN+m_dFieldLengths[i]+2;
-			}
-
-			const int MAX_INDEX_LEN = 8;
-			int iOldBufferLen = m_dDocBuffer.GetLength();
-			m_dDocBuffer.Resize ( iOldBufferLen+PROXY_MARKER_LEN+MAX_INDEX_LEN+2+iTotalFieldLen );
-			BYTE * pCurDocPtr = &(m_dDocBuffer[iOldBufferLen]);
-
-			StoredDoc_t * pDoc = PushDoc();
-			int nFields = T::m_tSchema.m_dFields.GetLength();
-			CopyDocInfo ( pDoc->m_tDocInfo, T::m_tDocInfo );
-			pDoc->m_dMva = T::m_dMva;
-			pDoc->m_dStrAttrs = T::m_dStrAttrs;
-			pDoc->m_dFields.Resize ( nFields );
-			pDoc->m_dFieldStorage.Resize ( nFields );
-			pDoc->m_dChinese.Resize ( nFields );
-			pDoc->m_dNonChineseTokens.Resize ( 0 );
-
-			// document start tag
-			COPY_MARKER ( pCurDocPtr, m_pMarkerDocStart );
-
-			// space
-			*pCurDocPtr++ = ' ';
-
-			// index in plain text
-			int iLen = snprintf ( szTmp, sizeof(szTmp), "%d", iCurDoc );
-			iLen = iLen>=0 ? iLen : sizeof(szTmp);
-			memcpy ( pCurDocPtr, szTmp, iLen );
-			pCurDocPtr += iLen;
-
-			// space
-			*pCurDocPtr++ = ' ';
-
-			for ( int i = 0; i < T::m_tSchema.m_dFields.GetLength(); i++ )
-			{
-				pDoc->m_dChinese[i] = sphDetectChinese ( pFields[i], m_dFieldLengths[i] );
-
-				if ( m_pProxyStripper )
-				{
-					m_pProxyStripper->Strip ( pFields[i] );
-					m_dFieldLengths[i] = strlen ( (const char *)pFields[i] );
-				}
-
-				int iFieldLen = m_dFieldLengths[i];
-
-				if ( !pDoc->m_dChinese[i] )
-				{
-					// no chinese? just save the field storage without tokenizing it
-					// it will be tokenized later in the splitter
-					pDoc->m_dFieldStorage[i].Resize ( iFieldLen+1 );
-					if ( pFields[i] )
-						memcpy ( pDoc->m_dFieldStorage[i].Begin(), pFields[i], iFieldLen+1 );
-					else
-						pDoc->m_dFieldStorage[i][0] = 0;
-
-					pDoc->m_dFields[i] = pDoc->m_dFieldStorage[i].Begin();
-
-					COPY_MARKER ( pCurDocPtr, m_pMarkerNonChineseField );
-					*pCurDocPtr++ = ' ';
-				} else
-				{
-					COPY_MARKER ( pCurDocPtr, m_pMarkerChineseField );
-					*pCurDocPtr++ = ' ';
-
-					pEmbeddedTokenizer->SetBuffer ( pFields[i], iFieldLen );
-					BYTE * pToken;
-					while ( ( pToken = pEmbeddedTokenizer->GetToken() )!=NULL )
-					{
-						int iTokenLen = strlen ( (const char*)pToken );
-						if ( sphDetectChinese ( pToken, iTokenLen ) )
-						{
-							// collect it in one big chinese token buffer that will be processed by RLP
-							memcpy ( pCurDocPtr, pToken, iTokenLen );
-							pCurDocPtr += iTokenLen;
-						} else
-						{
-							// drop it into "non-chinese" token vector
-							StoredToken_t & tStored = pDoc->m_dNonChineseTokens.Add();
-							FillStoredTokenInfo ( tStored, pToken, pEmbeddedTokenizer );
-
-							// add a 'non-chinese token' marker to the chinese token stream
-							*pCurDocPtr++ = ' ';
-							COPY_MARKER ( pCurDocPtr, m_pMarkerTokenSeparator );
-						}
-
-						*pCurDocPtr++ = ' ';
-					}
-				}
-			}
-
-			m_dDocBuffer.Resize ( pCurDocPtr-m_dDocBuffer.Begin() );
-			iCurDoc++;
-		}
-
-		if ( IsDocCacheEmpty() )
-			return NULL;
-
-		m_pExtraTokenizer->SetBuffer ( m_dDocBuffer.Begin(), m_dDocBuffer.GetLength() );
-		BYTE * pToken;
-
-		StoredDoc_t * pCurDoc = NULL;
-		bool bIndexNext = false;
-		int iField = -1;
-		int iStoredToken = 0;
-		while ( ( pToken = m_pExtraTokenizer->GetToken() )!=NULL )
-		{
-			bool bSpecial = false;
-			int iTokenLen = strlen ( (const char *)pToken );
-			if ( bIndexNext )
-			{
-				int iDoc = atoi ( (const char*)pToken );
-				pCurDoc = &(m_dBatchedDocs[iDoc]);
-				bIndexNext = false;
-				iField = -1;
-				iStoredToken = 0;
-			} else
-			{
-				if ( iTokenLen==PROXY_MARKER_LEN )
-				{
-					if ( CMP_MARKER ( pToken, m_pMarkerDocStart ) )
-					{
-						bIndexNext = true;
-						bSpecial = true;
-					} else if ( CMP_MARKER ( pToken, m_pMarkerChineseField ) )
-					{
-						assert ( pCurDoc );
-						iField++;
-						pCurDoc->m_dFieldStorage[iField].Resize(0);
-						pCurDoc->m_dFields[iField] = pCurDoc->m_dFieldStorage[iField].Begin();
-						bSpecial = true;
-					} else if ( CMP_MARKER ( pToken, m_pMarkerNonChineseField ) )
-					{
-						iField++;
-						bSpecial = true;
-					} else if ( CMP_MARKER ( pToken, m_pMarkerTokenSeparator ) )
-					{
-						StoredToken_t & tStored = pCurDoc->m_dNonChineseTokens[iStoredToken];
-
-						// copy stored non-chinese token && pack token data
-						AppendToField ( pCurDoc, iField, tStored.m_sToken, strlen ( (const char*)tStored.m_sToken ), m_pMarkerMorph );
-
-						// this depends on SPH_MAX_WORD_LEN being 6 bits max
-						DWORD uPacked = iTokenLen;
-
-						if ( tStored.m_bBoundary )
-							uPacked |= PROXY_BOUNDARY_FLAG;
-
-						if ( tStored.m_bSpecial )
-							uPacked |= PROXY_SPECIAL_FLAG;
-
-						if ( tStored.m_bBlended )
-							uPacked |= PROXY_BLENDED_FLAG;
-
-						if ( tStored.m_bBlendedPart )
-							uPacked |= PROXY_BLENDED_PART_FLAG;
-
-						int iTmpLen;
-						if ( tStored.m_iOvershortCount )
-						{
-							uPacked |= PROXY_HAVE_OVERSHORT;
-							iTmpLen = snprintf ( szTmp, sizeof(szTmp), " %x %x", uPacked, tStored.m_iOvershortCount );
-						} else
-							iTmpLen = snprintf ( szTmp, sizeof(szTmp), " %x", uPacked );
-
-						if ( iTmpLen < 0 )
-							iTmpLen = sizeof(szTmp);
-
-						int iStoredLen = pCurDoc->m_dFieldStorage[iField].GetLength();
-						pCurDoc->m_dFieldStorage[iField].Resize ( iStoredLen + iTmpLen );
-						memcpy ( pCurDoc->m_dFieldStorage[iField].Begin()+iStoredLen-1, szTmp, iTmpLen+1 );
-
-						pCurDoc->m_dFields[iField] = pCurDoc->m_dFieldStorage[iField].Begin();
-
-						iStoredToken++;
-						bSpecial = true;
-					}
-				}
-
-				// simple token; append to current field
-				if ( !bSpecial )
-					AppendToField ( pCurDoc, iField, pToken, iTokenLen, NULL );
-			}
-		}
-
-		return CopyDoc ();
-	}
-
-private:
-	CSphSource_Document *	m_pSource;
-	CSphFixedVector<StoredDoc_t> m_dBatchedDocs;
-	CSphVector<BYTE>		m_dDocBuffer;
-	CSphVector<int>			m_dFieldLengths;
-	int						m_iDocStart;
-	int						m_iDocCount;
-	ISphTokenizer *			m_pExtraTokenizer;
-	CSphHTMLStripper *		m_pProxyStripper;
-
-	BYTE					m_pMarkerDocStart[PROXY_MARKER_LEN];
-	BYTE					m_pMarkerChineseField[PROXY_MARKER_LEN];
-	BYTE					m_pMarkerNonChineseField[PROXY_MARKER_LEN];
-	BYTE					m_pMarkerTokenSeparator[PROXY_MARKER_LEN];
-
-	BYTE					m_pMarkerTokenized[PROXY_MARKER_LEN];
-	BYTE					m_pMarkerMorph[PROXY_MARKER_LEN];
-
-	bool					IsDocCacheEmpty() const	{ return !m_iDocCount; }
-	bool					IsDocCacheFull() const { return m_iDocCount==m_dBatchedDocs.GetLength(); }
-
-	StoredDoc_t * PushDoc()
-	{
-		assert ( !IsDocCacheFull() );
-
-		int iEnd = (m_iDocStart+m_iDocCount) % m_dBatchedDocs.GetLength();
-		m_iDocCount++;
-
-		return &(m_dBatchedDocs[iEnd]);
-	}
-
-	StoredDoc_t * PopDoc()
-	{
-		assert ( !IsDocCacheEmpty() );
-
-		StoredDoc_t * pDoc = &(m_dBatchedDocs[m_iDocStart]);
-		m_iDocStart = (m_iDocStart+1) % m_dBatchedDocs.GetLength();
-		m_iDocCount--;
-		return pDoc;
-	}
-
-	BYTE ** CopyDoc ()
-	{
-		StoredDoc_t * pDoc = PopDoc();
-		CopyDocInfo ( T::m_tDocInfo, pDoc->m_tDocInfo );
-		T::m_tState.m_dFields = pDoc->m_dFields.Begin();
-		T::m_dMva.SwapData ( pDoc->m_dMva );
-		T::m_dStrAttrs.SwapData ( pDoc->m_dStrAttrs );
-
-		return T::m_tState.m_dFields;
-	}
-
-	void CopyDocInfo ( CSphMatch & tTo, const CSphMatch & tFrom )
-	{
-		if ( tFrom.m_pDynamic )
-		{
-			int iDynamic = T::m_tSchema.GetRowSize();
-
-			if ( !tTo.m_pDynamic )
-				tTo.Reset ( iDynamic );
-
-			memcpy ( tTo.m_pDynamic, tFrom.m_pDynamic, iDynamic*sizeof(CSphRowitem) );
-		}
-
-		tTo.m_pStatic = NULL;
-		tTo.m_uDocID = tFrom.m_uDocID;
-		tTo.m_iWeight = tFrom.m_iWeight;
-		tTo.m_iTag = tFrom.m_iTag;
-	}
-};
-
-#endif // USE_RLP
 
 #endif // _sphinxint_
 

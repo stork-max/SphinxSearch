@@ -3,6 +3,7 @@
 $sd_address 		= "127.0.0.1";
 $sd_port 			= 6712;
 $sd_sphinxql_port	= 6706;
+$sd_http_port		= 6780;
 $sd_log				= "searchd.log";
 $sd_query_log		= "query.log";
 $sd_read_timeout	= 5;
@@ -115,7 +116,7 @@ function GuessRE2 ()
 function GuessRLP ()
 {
 	global $g_rlp;
-    $g_rpl = GuessFeature ( 'test_rlp.conf','no RLP support compiled');
+    $g_rlp = GuessFeature ( 'test_rlp.conf','no RLP support compiled');
 }
 
 function GuessODBC ()

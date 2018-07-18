@@ -69,7 +69,7 @@
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">$(SolutionDir)\junk\$(Configuration)\$(ProjectName)\</IntDir>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(SolutionDir)\bin\$(Configuration)\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">$(SolutionDir)\junk\$(Configuration)\$(ProjectName)\</IntDir>
-	<OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)\bin\$(Configuration)\</OutDir>
+    <OutDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)\bin\$(Configuration)\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)\junk\$(Configuration)\$(ProjectName)\</IntDir>
     <OutDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)\bin\$(Configuration)\</OutDir>
     <IntDir Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)\junk\$(Configuration)\$(ProjectName)\</IntDir>
@@ -91,7 +91,6 @@
       <Optimization>Disabled</Optimization>
       <AdditionalIncludeDirectories>$(SolutionDir)/libstemmer_c/include; $(SolutionDir)/libexpat/lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <MinimalRebuild>true</MinimalRebuild>
       <ExceptionHandling>
       </ExceptionHandling>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -102,6 +101,7 @@
       <WarningLevel>Level4</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <EnablePREfast>false</EnablePREfast>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Lib>
       <OutputFile>$(OutDir)libsphinx.lib</OutputFile>
@@ -120,6 +120,7 @@
       <ProgramDataBaseFileName>$(IntDir)</ProgramDataBaseFileName>
       <WarningLevel>Level4</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Lib>
       <OutputFile>$(OutDir)libsphinx.lib</OutputFile>
@@ -145,7 +146,6 @@
       <Optimization>Disabled</Optimization>
       <AdditionalIncludeDirectories>$(SolutionDir)/libstemmer_c/include; $(SolutionDir)/libexpat/lib;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <MinimalRebuild>true</MinimalRebuild>
       <ExceptionHandling>
       </ExceptionHandling>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
@@ -167,7 +167,9 @@
     <ClCompile Include="..\src\sphinxjson.cpp" />
     <ClCompile Include="..\src\sphinxmetaphone.cpp" />
     <ClCompile Include="..\src\sphinxplugin.cpp" />
+    <ClCompile Include="..\src\sphinxqcache.cpp" />
     <ClCompile Include="..\src\sphinxquery.cpp" />
+    <ClCompile Include="..\src\sphinxrlp.cpp" />
     <ClCompile Include="..\src\sphinxrt.cpp" />
     <ClCompile Include="..\src\sphinxsearch.cpp" />
     <ClCompile Include="..\src\sphinxsort.cpp" />
@@ -190,14 +192,16 @@
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">$(SolutionDir)\src\nonexistent;%(Outputs)</Outputs>
       <Command Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)\src\git_commit_id.cmd</Command>
       <Outputs Condition="'$(Configuration)|$(Platform)'=='Release|x64'">$(SolutionDir)\src\nonexistent;%(Outputs)</Outputs>
-    </CustomBuild>  
+    </CustomBuild>
     <ClInclude Include="..\src\sphinxexcerpt.h" />
     <ClInclude Include="..\src\sphinxexpr.h" />
     <ClInclude Include="..\src\sphinxfilter.h" />
     <ClInclude Include="..\src\sphinxint.h" />
     <ClInclude Include="..\src\sphinxjson.h" />
     <ClInclude Include="..\src\sphinxplugin.h" />
+    <ClInclude Include="..\src\sphinxqcache.h" />
     <ClInclude Include="..\src\sphinxquery.h" />
+    <ClInclude Include="..\src\sphinxrlp.h" />
     <ClInclude Include="..\src\sphinxrt.h" />
     <ClInclude Include="..\src\sphinxsearch.h" />
     <ClInclude Include="..\src\sphinxstd.h" />

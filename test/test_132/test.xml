@@ -226,7 +226,7 @@ for ( $i = 1; $i <= 16000; $i++)
 
 $results = array_merge ( $results, $query ( "select * from rt_mva order by id desc limit 3", $sock ) );
 $results = array_merge ( $results, $query ( "show meta", $sock ) );
-$results = array_merge ( $results, $query ( "select * from rt_mva where mva<17000 order by id asc limit 3", $sock ) );
+$results = array_merge ( $results, $query ( "select * from rt_mva where any(mva)<17000 order by id asc limit 3", $sock ) );
 $results = array_merge ( $results, $query ( "show meta", $sock ) );
 
 // regressions:
@@ -247,7 +247,17 @@ for ( $i = 0; $i<100; $i++ )
 	if ( @mysql_error() )
 		$results[] = 'i=$i' . @mysql_error();	
 }
-$results[] = 'post update flush tag - ' . $client->FlushAttributes();
+
+
+// just fake flush tag for RT mode as RT does not support FlushAttributes command
+global $g_locals;
+if ( !array_key_exists ('rt_mode', $g_locals) || !$g_locals['rt_mode'] )
+{
+	$results[] = 'post update flush tag - ' . $client->FlushAttributes();
+} else
+{
+	$results[] = 'post update flush tag - 1';
+}
 
 @mysql_close($sock);
 

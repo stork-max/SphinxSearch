@@ -5,7 +5,7 @@
 ]>
 <book lang="en">
 
-<title>Sphinx 2.2.11-release reference manual</title>
+<title>Sphinx 2.3.2-beta reference manual</title>
 <subtitle>Free open-source SQL full-text search engine</subtitle>
 
 <bookinfo>
@@ -292,10 +292,10 @@ specific project files) manually.
     <para>
     Extract everything from the distribution tarball (haven't you already?)
     and go to the <filename>sphinx</filename> subdirectory. (We are using
-    version 2.2.11-dev here for the sake of example only; be sure to change this
+    version 2.3.2-beta here for the sake of example only; be sure to change this
     to a specific version you're using.)
     </para>
-<para><literallayout><userinput>$ tar xzvf sphinx-2.2.11-dev.tar.gz
+<para><literallayout><userinput>$ tar xzvf sphinx-2.3.2-beta.tar.gz
 $ cd sphinx
 </userinput></literallayout></para></listitem>
 <listitem>
@@ -367,14 +367,14 @@ do not seem to help you, please don't hesitate to contact me.
     <userinput>$ sudo apt-get install mysql-client unixodbc libpq5</userinput></listitem>
 <listitem>
     <para>Now you can install Sphinx:</para>
-    <userinput>$ sudo dpkg -i sphinxsearch_2.2.11-dev-0ubuntu12~trusty_amd64.deb</userinput></listitem>
+    <userinput>$ sudo dpkg -i sphinxsearch_2.3.2-beta-1~trusty_amd64.deb</userinput></listitem>
 </orderedlist>
 <para>PPA repository (Ubuntu only).</para>
 <para>Installing Sphinx is much easier from Sphinxsearch PPA repository, because you will get all dependencies and can also update Sphinx to the latest version with the same command.</para>
 <orderedlist>
 <listitem>    
     <para>First, add Sphinxsearch repository and update the list of packages:</para>
-    <para><userinput>$ sudo add-apt-repository ppa:builds/sphinxsearch-rel22</userinput></para>
+    <para><userinput>$ sudo add-apt-repository ppa:builds/sphinxsearch-rel23</userinput></para>
     <para><userinput>$ sudo apt-get update</userinput></para></listitem>
 <listitem>
     <para>Install/update sphinxsearch package:</para>
@@ -407,9 +407,9 @@ area on the website.</para>
 <orderedlist>
 <listitem>
     <para>Extract everything from the .zip file you have downloaded -
-    <filename>sphinx-2.2.11-dev-win32.zip</filename>,
-    or <filename>sphinx-2.2.11-dev-win32-pgsql.zip</filename> if you need PostgresSQL support as well.
-    (We are using version 2.2.11-dev here for the sake of example only;
+    <filename>sphinx-2.3.2-beta-win32.zip</filename>,
+    or <filename>sphinx-2.3.2-beta-win32-pgsql.zip</filename> if you need PostgresSQL support as well.
+    (We are using version 2.3.2-beta here for the sake of example only;
     be sure to change this to a specific version you're using.)
     You can use Windows Explorer in Windows XP and up to extract the files,
     or a freeware package like 7Zip to open the archive.</para>
@@ -2540,7 +2540,7 @@ because even though mutual dispositions of 3 keywords (one, three, five) match b
 the query and the document, no 2 matching positions are actually next to each other.
 </para><para>
 Note that LCCS still does not differentiate between the frequent and rare keywords;
-for that, see WLCS and WLLCS.
+for that, see WLCCS.
 </para></listitem>
 <listitem><para>
 <code>wlccs</code> (float), added in version 2.2.1-beta. Weighted Longest Common Contiguous
@@ -2701,6 +2701,7 @@ Here's the complete reference list for quick access.
 <listitem><para><link linkend="expr-func-geodist">GEODIST()</link></para></listitem>
 <listitem><para><link linkend="expr-func-geopoly2d">GEOPOLY2D()</link></para></listitem>
 <listitem><para><link linkend="expr-func-greatest">GREATEST()</link></para></listitem>
+<listitem><para><link linkend="expr-func-hour">HOUR()</link></para></listitem>
 <listitem><para><link linkend="expr-func-idiv">IDIV()</link></para></listitem>
 <listitem><para><link linkend="expr-func-if">IF()</link></para></listitem>
 <listitem><para><link linkend="expr-func-in">IN()</link></para></listitem>
@@ -2714,13 +2715,16 @@ Here's the complete reference list for quick access.
 <listitem><para><link linkend="expr-func-log2">LOG2()</link></para></listitem>
 <listitem><para><link linkend="expr-func-max">MAX()</link></para></listitem>
 <listitem><para><link linkend="expr-func-min">MIN()</link></para></listitem>
+<listitem><para><link linkend="expr-func-minute">MINUTE()</link></para></listitem>
 <listitem><para><link linkend="expr-func-min-top-sortval">MIN_TOP_SORTVAL()</link></para></listitem>
 <listitem><para><link linkend="expr-func-min-top-weight">MIN_TOP_WEIGHT()</link></para></listitem>
 <listitem><para><link linkend="expr-func-month">MONTH()</link></para></listitem>
 <listitem><para><link linkend="expr-func-now">NOW()</link></para></listitem>
 <listitem><para><link linkend="expr-func-poly2d">POLY2D()</link></para></listitem>
 <listitem><para><link linkend="expr-func-pow">POW()</link></para></listitem>
+<listitem><para><link linkend="expr-func-rand">RAND()</link></para></listitem>
 <listitem><para><link linkend="expr-func-remap">REMAP()</link></para></listitem>
+<listitem><para><link linkend="expr-func-second">SECOND()</link></para></listitem>
 <listitem><para><link linkend="expr-func-sin">SIN()</link></para></listitem>
 <listitem><para><link linkend="expr-func-sint">SINT()</link></para></listitem>
 <listitem><para><link linkend="expr-func-sqrt">SQRT()</link></para></listitem>
@@ -2961,6 +2965,22 @@ This polygon assumes a flat Earth, so it should not be too large; see the <link 
 <term id="expr-func-yearmonthday">YEARMONTHDAY()</term>
 <listitem><para>Returns the integer year, month, and date code (in 19691231..20380119 range) from a timestamp argument, according to the current timezone. Introduced in version 2.0.1-beta.</para></listitem>
 </varlistentry>
+
+<varlistentry>
+<term id="expr-func-second">SECOND()</term>
+<listitem><para>Returns the integer second (in 0..59 range) from a timestamp argument, according to the current timezone. Introduced in version 2.3.2-beta.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term id="expr-func-minute">MINUTE()</term>
+<listitem><para>Returns the integer minute (in 0..59 range) from a timestamp argument, according to the current timezone. Introduced in version 2.3.2-beta.</para></listitem>
+</varlistentry>
+
+<varlistentry>
+<term id="expr-func-hour">HOUR()</term>
+<listitem><para>Returns the integer hour (in 0..23 range) from a timestamp argument, according to the current timezone. Introduced in version 2.3.2-beta.</para></listitem>
+</varlistentry>
+
 
 </variablelist>
 </sect2>
@@ -3352,6 +3372,15 @@ integer, expression can result in integer or float.
 SELECT REMAP(userid, karmapoints, (1, 67), (999, 0)) FROM users;
 SELECT REMAP(id%10, salary, (0), (0.0)) FROM employes;
 </programlisting>
+</para>
+</listitem>
+</varlistentry>
+
+<varlistentry>
+<term id="expr-func-rand">rand()</term>
+<listitem>
+<para>
+RAND(seed) function was added in 2.3.2-beta. Returns a random float between 0..1. Optional, an integer seed value can be specified.
 </para>
 </listitem>
 </varlistentry>
@@ -3775,7 +3804,31 @@ modifying RT indexes with INSERT, REPLACE, and DELETE, and much more.
 Full SphinxQL reference is available in <xref linkend="sphinxql-reference"/>.
 </para>
 </sect1>
-
+<sect1 id="http-rest"><title>HTTP protocol</title>
+<para>
+Starting with 2.3.2-beta, Sphinx search daemon supports HTTP protocol and can be accessed with regular HTTP clients.
+Supported endpoints:
+<itemizedlist>
+<listitem><para>/ - default response, returns a simple HTML page</para>
+</listitem>
+<listitem><para>/search - allows a simple full-text search, parameters can be : index (index or list of indexes), match (equivalent of MATCH()), select (as SELECT clause), group (grouping attribute),
+order (SQL-like sorting), limit (equivalent of LIMIT 0,N)
+<programlisting>curl -X POST 'http://sphinxsearch:9308/search/' 
+-d 'index=forum&amp;match=@subject php sphinx&amp;select=id,subject,author_id&amp;limit=5'
+</programlisting>
+</para> 
+</listitem>
+<listitem><para>/ sql - allows running a SELECT SphinxQL, set as query parameter
+<programlisting>
+ curl -X POST 'http://sphinxsearch:9308/sql/' 
+-d 'query=select id,subject,author_id  from forum where match('@subject php sphinx')  group by author_id order by id desc limit 0,5'
+</programlisting>
+</para>
+</listitem>
+</itemizedlist>
+The result  for /sql/ and /search/ endpoints is an array of attrs,matches and meta, same as for SphinxAPI, encoded as a JSON object.
+</para>
+</sect1>
 
 <sect1 id="multi-queries"><title>Multi-queries</title>
 <para>
@@ -4017,6 +4070,98 @@ affect full-text searching, for that use <link linkend="conf-charset-table">char
 </sect1>
 
 
+<sect1 id="qcache"><title>Query cache</title>
+<para>
+Query cache, added in 2.3.1-beta, stores a compressed result set in memory,
+and then reuses it for subsequent queries where possible. You can configure
+it using the following directives:
+<itemizedlist>
+<listitem><para><link linkend="conf-qcache-max-bytes">qcache_max_bytes</link>,
+a limit on the RAM use for cached queries storage. Defaults to 16 MB. Setting
+qcache_max_bytes to 0 completely disables the query cache.
+</para></listitem>
+<listitem><para><link linkend="conf-qcache-thresh-msec">qcache_thresh_msec</link>,
+the minimum wall query time to cache. Queries that completed faster than this will
+<emphasis>not</emphasis> be cached. Defaults to 3000 msec, or 3 seconds.
+</para></listitem>
+<listitem><para><link linkend="conf-qcache-ttl-sec">qcache_ttl_sec</link>,
+cached entry TTL, or time to live. Queries will stay cached for this much.
+Defaults to 60 seconds, or 1 minute.
+</para></listitem>
+</itemizedlist>
+These settings can be changed on the fly using the
+<link linkend="sphinxql-set">SET GLOBAL</link> statement:
+<programlisting>
+mysql&gt; SET GLOBAL qcache_max_bytes=128000000;
+</programlisting>
+These changes are applied immediately, and the cached result sets that no longer
+satisfy the constraints are immediately discarded. When reducing the cache size
+on the fly, MRU (most recently used) result sets win.
+</para>
+<para>
+Query cache works as follows. When it's enabled, <emphasis>every</emphasis>
+full-text search result gets <emphasis>completely</emphasis> stored in memory.
+That happens after full-text matching, filtering, and ranking, so basically
+we store <code>total_found</code> {docid,weight} pairs. Compressed matches
+can consume anywhere from 2 bytes to 12 bytes per match on average, mostly
+depending on the deltas between the subsequent docids. Once the query completes,
+we check the wall time and size thresholds, and either save that compressed
+result set for reuse, or discard it.
+</para>
+<para>
+Note how the query cache impact on RAM is thus <emphasis>not</emphasis>
+limited by <code>qcache_max_bytes</code>! If you run, say, 10 concurrent
+queries, each of them matching upto 1M matches (after filters), then the
+peak temporary RAM use will be in the 40 MB to 240 MB range, even if
+in the end the queries are quick enough and do not get cached.
+</para>
+<para>
+Queries can then use cache when the index, the full-text query (ie. MATCH()
+contents), and the ranker are all a match, and filters are compatible.
+Meaning:
+<itemizedlist>
+<listitem><para>The full-text part within MATCH() must be a bytewise match.
+Add a single extra space, and that is now a different query where the query
+cache is concerned.
+</para></listitem>
+<listitem><para>The ranker (and its parameters if any, for user-defined rankers)
+must be a bytewise match.
+</para></listitem>
+<listitem><para>The filters must be a superset of the original filters. That is,
+you can add extra filters and still hit the cache. (In this case, the extra filters
+will be applied to the cached result.) But if you remove one, that will be a new
+query again.
+</para></listitem>
+</itemizedlist>
+</para>
+<para>
+Cache entries expire with TTL, and also get invalidated on index rotation,
+or on TRUNCATE, or on ATTACH. Note that at the moment entries are <b>not</b>
+invalidated on arbitrary RT index writes! So a cached query might be returning
+older results for the duration of its TTL.
+</para>
+<para>
+Current cache status can be inspected with
+in <link linkend="sphinxql-show-status">SHOW STATUS</link>
+through the <code>qcache_XXX</code> variables:
+<programlisting>
+mysql&gt; SHOW STATUS LIKE 'qcache%';
++-----------------------+----------+
+| Counter               | Value    |
++-----------------------+----------+
+| qcache_max_bytes      | 16777216 |
+| qcache_thresh_msec    | 3000     |
+| qcache_ttl_sec        | 60       |
+| qcache_cached_queries | 0        |
+| qcache_used_bytes     | 0        |
+| qcache_hits           | 0        |
++-----------------------+----------+
+6 rows in set (0.00 sec)
+</programlisting>
+</para>
+</sect1>
+
+
 </chapter>
 <chapter id="extending-sphinx"><title>Extending Sphinx</title>
 
@@ -4056,7 +4201,9 @@ anyone install arbitrary code into <filename>searchd</filename> is a risk.
 You can load and unload them dynamically into searchd
 with <link linkend="sphinxql-create-function">CREATE FUNCTION</link> and
 <link linkend="sphinxql-drop-function">DROP FUNCTION</link> SphinxQL statements
-respectively. Sphinx keeps track of the currently loaded functions, that is,
+respectively. Also, you can seamlessly reload UDFs (and other plugins) with
+<link linkend="sphinxql-reload-plugins">RELOAD PLUGINS</link> statement.
+Sphinx keeps track of the currently loaded functions, that is,
 every time you create or drop an UDF, <filename>searchd</filename> writes
 its state to the <link linkend="conf-sphinxql-state">sphinxql_state</link> file
 as a plain good old SQL script.
@@ -4067,13 +4214,6 @@ statements just as well as any of the builtin functions:
 <programlisting>
 SELECT id, MYCUSTOMFUNC(groupid, authorname), ... FROM myindex
 </programlisting>
-</para>
-<para>
-UDFs are completely supported in <link linkend="conf-workers">workers=threads</link>
-mode only. They are partially supported in <code>workers=prefork</code> mode too:
-namely, CREATEs from the <code>sphinxql_state</code> startup script will work and
-those UDFs will be accessible. However, DROPs will not be available. UDFs are not
-supported in <code>workers=fork</code> mode.
 </para>
 <para>
 Multiple UDFs (and other plugins) may reside in a single library. That library
@@ -4087,9 +4227,9 @@ properly exported functions. Of course, the path of least resistance is to write
 in either C++ or plain C. We provide an example UDF library written in plain C
 and implementing several functions (demonstrating a few different techniques)
 along with our source code, see 
-<ulink url="http://code.google.com/p/sphinxsearch/source/browse/trunk/src/udfexample.c">src/udfexample.c</ulink>.
+<ulink url="https://github.com/sphinxsearch/sphinx/blob/master/src/udfexample.c">src/udfexample.c</ulink>.
 That example includes
-<ulink url="http://code.google.com/p/sphinxsearch/source/browse/trunk/src/sphinxudf.h">src/sphinxudf.h</ulink>
+<ulink url="https://github.com/sphinxsearch/sphinx/blob/master/src/sphinxudf.h">src/sphinxudf.h</ulink>
 header file definitions of a few UDF related structures and types. For most
 UDFs and plugins, a mere <code>#include "sphinxudf.h"</code>, like in the example,
 should be completely sufficient, too. However, if you're writing a ranking function and
@@ -4305,7 +4445,7 @@ things specific to writing this or that type of a plugin are then
 discussed in their respective subsections.
 </para>
 <para>
-So, how do you write and use a plugin? Three-line crash course
+So, how do you write and use a plugin? Four-line crash course
 goes as follows:
 <itemizedlist>
 <listitem><para>create a dynamic library (either .so or.dll),
@@ -4316,6 +4456,10 @@ most likely in C or C++;</para></listitem>
 <listitem><para>invoke it using the plugin specific calls
 (typically using this or that OPTION).
 </para></listitem>
+<listitem><para>to unload or reload a plugin use
+<link linkend="sphinxql-drop-plugin">DROP PLUGIN</link> and
+<link linkend="sphinxql-reload-plugins">RELOAD PLUGINS</link>
+respectively.</para></listitem>
 </itemizedlist>
 Note that while UDFs are first-class plugins they are nevertheless
 installed using a separate
@@ -4636,7 +4780,11 @@ the index is rebuilt, each new document id is checked for presence in the
 the "new" index; if not found, attributes from the new index are used. If
 the user has updated attributes in the index, but not in the actual source
 used for the index, all updates will be lost when reindexing; using --keep-attrs
-enables saving the updated attribute values from the previous index
+enables saving the updated attribute values from the previous index. 
+Starting with 2.3.2-beta it is possible to specify a path for index files to used instead of reference path from config:
+<programlisting>
+indexer myindex --keep-attrs=/path/to/index/files
+</programlisting>
 </para></listitem>
 
 <listitem><para><option>--dump-rows &lt;FILE&gt;</option> dumps rows fetched
@@ -5515,6 +5663,8 @@ result set is in both cases the same; picking one option or the other may just i
 for an <code>ORDER BY RAND()</code> query, for example: ... OPTION <code>rand_seed=1234</code>.
 By default, a new and different seed value is autogenerated for every query.
 </para></listitem>
+<listitem><para>'low_priority' - runs the query with idle priority, introduced in 2.3.2-beta.
+</para></listitem>
 </itemizedlist>
 Example:
 <programlisting>
@@ -6027,6 +6177,27 @@ Changes the current log verboseness level.
 Introduced in version 2.0.1-beta.
 </para></listitem>
 </varlistentry>
+<varlistentry>
+<term><code>QCACHE_MAX_BYTES = &lt;value&gt;</code></term>
+<listitem><para>
+Changes the <link linkend="qcache">query cache</link> RAM use limit to a given value.
+Added in 2.3.1-beta.
+</para></listitem>
+</varlistentry>
+<varlistentry>
+<term><code>QCACHE_THRESH_MSEC = &lt;value&gt;</code></term>
+<listitem><para>
+Changes the <link linkend="qcache">query cache</link> minimum wall time threshold to a given value.
+Added in 2.3.1-beta.
+</para></listitem>
+</varlistentry>
+<varlistentry>
+<term><code>QCACHE_TTL_SEC = &lt;value&gt;</code></term>
+<listitem><para>
+Changes the <link linkend="qcache">query cache</link> TTL for a cached result to a given value.
+Added in 2.3.1-beta.
+</para></listitem>
+</varlistentry>
 </variablelist>
 </para>
 <para>
@@ -6142,7 +6313,7 @@ CALL SNIPPETS(('data/doc1.txt','data/doc2.txt','/home/sphinx/doc3.txt'), 'test1'
 
 <sect1 id="sphinxql-call-keywords"><title>CALL KEYWORDS syntax</title>
 <programlisting>
-CALL KEYWORDS(text, index [, 1])
+CALL KEYWORDS(text, index [, options])
 </programlisting>
 <para>
 CALL KEYWORDS statement, introduced in version 1.10-beta, splits text
@@ -6154,11 +6325,72 @@ forms of tokenized keywords in the case that lemmatizers were used.
 <para>
 <option>text</option> is the text to break down to keywords.
 <option>index</option> is the name of the index from which to take the text
-processing settings. <option>hits</option> is an optional boolean parameter
+processing settings. 
+<option>options</option> prior 2.3.2-beta, is an optional boolean parameter
 that specifies whether to return document and hit occurrence statistics.
+<option>options</option> starting with 2.3.2-beta, can also accept parameters for configuring folding depending on tokenization settings:
+<itemizedlist>
+<listitem><para><option>stats</option> - show statistics of keywords, default is 0</para></listitem>
+<listitem><para><option>fold_wildcards</option> -  fold wildcards, default is 1</para></listitem>
+<listitem><para><option>fold_lemmas</option> - fold morphological lemmas, default is 0</para></listitem>
+<listitem><para><option>fold_blended</option> - fold blended words, default is 0 </para></listitem>
+<listitem><para><option>expansion_limit</option> - override expansion_limit defined in configuration, default is 0 (use value from configuration) </para></listitem>
+</itemizedlist>
+<programlisting>
+call keywords(
+    'que*',
+    'myindex',
+    1 as fold_wildcards,
+    1 as fold_lemmas,
+    1 as fold_blended,
+    1 as expansion_limit,
+    1 as stats);
+</programlisting>
+Default values to match previous CALL KEYWORDS output are:
+<programlisting>
+call keywords(
+    'que*',
+    'myindex',
+    1 as fold_wildcards,
+    0 as fold_lemmas,
+    0 as fold_blended,
+    0 as expansion_limit,
+    0 as stats);
+</programlisting>
 </para>
 </sect1>
 
+<sect1 id="sphinxql-call-qsuggest"><title>CALL QSUGGEST syntax</title>
+<programlisting>
+CALL QSUGGEST(word, index [,options])
+</programlisting>
+CALL QSUGGEST statement, introduced in version 2.3.2-beta,  enumerates for a giving word all suggestions from the dictionary. This statement works only on indexes with infixing enabled and dict=keywords. 
+It returns the suggested keywords, Levenshtein  distance between the suggested and original keyword and the docs statistic of the suggested keyword.
+Several options are supported for customization:
+<itemizedlist>
+<listitem><para><option>limit</option> - returned N top matches, default is 5</para></listitem>
+<listitem><para><option>max_edits</option> -  keep only dictionary words which Levenshtein distance is less or equal, default is 4</para></listitem>
+<listitem><para><option>result_stats</option> - provide Levenshtein distance and document count of the found words, default is 1 (enabled)</para></listitem>
+<listitem><para><option>delta_len</option> - keep only dictionary words whose length difference is less, default is 3 </para></listitem>
+<listitem><para><option>max_matches</option> - number of matches to keep, default is 25 </para></listitem>
+<listitem><para><option>reject</option> - defaults to 4; rejected words are matches that are not better than those already in the match queue. They are put in a rejected queue that gets reset in case one actually can go in the match queue.
+This parameter defines the size of the rejected queue (as reject*max(max_matched,limit)). If the rejected queue is filled, the engine stops looking for potential matches. </para></listitem>
+<listitem><para><option>result_line</option> - alternate mode to display the data by returning all suggests, distances and docs each per one row, default is 0 </para></listitem>
+</itemizedlist>
+<programlisting>
+mysql> CALL QSUGGEST('automaticlly ','forum', 5 as limit, 4 as max_edits,1 as result_stats,3 as delta_len,0 as result_line,25 as max_matches,4 as reject );
++---------------+----------+------+
+| suggest       | distance | docs |
++---------------+----------+------+
+| automatically | 1        | 282  |
+| automaticly   | 1        | 6    |
+| automaticaly  | 1        | 3    |
+| automagically | 2        | 14   |
+| automtically  | 2        | 1    |
++---------------+----------+------+
+5 rows in set (0.00 sec)
+</programlisting>
+</sect1>
 
 <sect1 id="sphinxql-show-tables"><title>SHOW TABLES syntax</title>
 <programlisting>
@@ -6663,6 +6895,45 @@ Query OK, 0 rows affected (0.05 sec)
 </sect1>
 
 
+<sect1 id="sphinxql-flush-attributes"><title>FLUSH ATTRIBUTES syntax</title>
+<programlisting>
+FLUSH ATTRIBUTES
+</programlisting>
+<para>
+Added in 2.3.1-beta. Flushes all in-memory attribute updates in all
+the active disk indexes to disk. Returns a tag that identifies the result
+on-disk state (basically, a number of actual disk attribute saves performed
+since the daemon startup).
+</para>
+<programlisting>
+mysql> UPDATE testindex SET channel_id=1107025 WHERE id=1;
+Query OK, 1 row affected (0.04 sec)
+
+mysql> FLUSH ATTRIBUTES;
++------+
+| tag  |
++------+
+|    1 |
++------+
+1 row in set (0.19 sec)
+</programlisting>
+</sect1>
+
+<sect1 id="sphinxql-flush-hostnames"><title>FLUSH HOSTNAMES syntax</title>
+<programlisting>
+FLUSH HOSTNAMES
+</programlisting>
+<para>
+Added in 2.3.2-beta. Renew IPs associates to agent host names. To always query the DNS for getting the host name IP, see <link linkend="conf-hostname-lookup">hostname_lookup</link> directive.
+</para>
+<programlisting>
+mysql> FLUSH HOSTNAMES;
+Query OK, 5 rows affected (0.01 sec)
+</programlisting>
+</sect1>
+
+
+
 <sect1 id="sphinxql-truncate-rtindex"><title>TRUNCATE RTINDEX syntax</title>
 <programlisting>
 TRUNCATE RTINDEX rtindex
@@ -6946,6 +7217,8 @@ for ranking purposes). Only available for indexes built with index_field_lengths
 <listitem><b>ram_bytes</b>, total size (in bytes) of the RAM-resident
 index portion.
 </listitem>
+<listitem>queries time statistics of last 1 minute, 5 minutes, 15 minutes and total since daemon start;data is encapsulated as a JSON object which includes number of queries, min,max,avg,95 and 99 percentile values; introduced in 2.3.2-beta</listitem>
+<listitem>queries found rows statistics of last 1 minute, 5 minutes, 15 minutes and total since daemon start;data is encapsulated as a JSON object which includes number of queries, min,max,avg,95 and 99 percentile values; introduced in 2.3.2-beta</listitem>
 </itemizedlist>
 </para>
 <programlisting>
@@ -7155,6 +7428,45 @@ mysql> SHOW PLUGINS;
 </programlisting>
 </sect1>
 
+
+<sect1 id="sphinxql-reload-plugins"><title>RELOAD PLUGINS syntax</title>
+<programlisting>
+RELOAD PLUGINS FROM SONAME 'plugin_library'
+</programlisting>
+<para>
+Added in 2.3.1-beta. Reloads all plugins (UDFs, rankers, etc) from a given
+library. Reload is, in a sense, transactional: a succesful reload guarantees
+that a) all the plugins were succesfully updated with their new versions;
+b) the update was atomic, all the plugins were replaced at once. Atomicity
+means that queries using multiple functions from a reloaded library will
+never mix the old and new versions. The set of plugins is guaranteed to always
+be consistent during the RELOAD, it will be either all old, or all new.
+</para>
+<para>
+Reload also is seamless, meaning that some version of a reloaded plugin
+will be available to concurrent queries at all times, and there will be no
+temporary disruptions. Note how this improves on using a pair of DROP and
+CREATE statements for reloading: with those, there is a tiny window between
+the DROP and the subsequent CREATE, during which the queries technically refer
+to an unknown plugin and will thus fail.
+</para>
+<para>
+In case of any failure RELOAD PLUGINS does absolutely nothing, keeps
+the old plugins, and reports an error.
+</para>
+<para>
+On Windows, either overwriting or deleting a DLL library currently in use
+seems to be an issue. However, you can still rename it, then put a new version
+under the old name, and RELOAD will then work. After a succesful reload you
+will also be able to delete the renamed old library, too.
+</para>
+<programlisting>
+mysql> RELOAD PLUGINS FROM SONAME 'udfexample.dll';
+Query OK, 0 rows affected (0.00 sec)
+</programlisting>
+</sect1>
+
+
 <sect1 id="sphinxql-threads"><title>SHOW THREADS syntax</title>
 <programlisting>
 SHOW THREADS [ OPTION columns=width ]
@@ -7190,6 +7502,29 @@ mysql> SHOW THREADS OPTION columns=50;
 | 1168 | sphinxql | query | 0.000002 | select * from rt where match ( 'the box and faximi |
 +------+----------+-------+----------+----------------------------------------------------+
 3 row in set (0.00 sec)
+</programlisting>
+</sect1>
+
+<sect1 id="sphinxql-reload-index"><title>RELOAD INDEX syntax</title>
+<programlisting>
+RELOAD INDEX idx [ FROM '/path/to/index_files' ]
+</programlisting>
+<para>
+RELOAD INDEX, added in 2.3.1-beta, allows you to rotate indexes using SphinxQL.
+</para>
+<para>
+It has two modes of operation. First one (without specifying a path) makes Sphinx
+daemon check for new index files in directory specified in
+<xref linkend="conf-path">path</xref>. New index files must have a idx.new.sp? names.
+</para>
+<para>
+And if you additionally specify a path, daemon will look for index files in specified
+directory, move them to index <xref linkend="conf-path">path</xref>, rename from
+index_files.sp? to idx.new.sp? and rotate them.
+</para>
+<programlisting>
+mysql> RELOAD INDEX plain_index;
+mysql> RELOAD INDEX plain_index FROM '/home/mighty/new_index_files';
 </programlisting>
 </sect1>
 
@@ -11310,24 +11645,32 @@ min_prefix_len = 3
 
 <sect2 id="conf-min-infix-len"><title>min_infix_len</title>
 <para>
-Minimum infix prefix length to index.
-Optional, default is 0 (do not index infixes).
+Minimum infix prefix length to index and search.
+Optional, default is 0 (do not index infixes), and minimum allowed non-zero value is 2.
 </para>
 <para>
-Infix indexing allows to implement wildcard searching by 'start*', '*end', and '*middle*' wildcards.
-When minimum infix length is set to a positive number, indexer will index all the possible keyword infixes
-(ie. substrings) in addition to the keywords themselves. Too short infixes
-(below the minimum allowed length) will not be indexed. For instance,
-indexing a keyword "test" with min_infix_len=2 will result in indexing
-"te", "es", "st", "tes", "est" infixes along with the word itself.
-Searches against such index for "es" will match documents that contain
-"test" word, even if they do not contain "es" on itself. However,
-indexing infixes will make the index grow significantly (because of
-many more indexed keywords), and will degrade both indexing and
-searching times.</para>
+Infix length setting enables wildcard searches with term patterns like
+'start*', '*end', '*middle*', and so on. It also lets you disable too short
+wildcards if those are too expensive to search for.
+</para>
 <para>
 Perfect word matches can be differentiated from infix matches, and ranked higher, by utilizing all of the following options: a) dict=keywords (on by default), b) index_exact_words=1 (off by default), and c) expand_keywords=1 (also off by default).
 Note that either with the legacy dict=crc mode (which you should ditch anyway!), or with any of the above options disable, there is no data to differentiate between the infixes and full words, and thus perfect word matches can't be ranked higher.
+</para>
+<para>
+However, query time might vary greatly, depending on how many keywords the substring
+will actually expand to. Short and frequent syllables like '*in*' or '*ti*' just might
+expand to way too many keywords, all of which would need to be matched and processed.
+Therefore, to generally enable substring searches you would set min_infix_len to 2;
+and to limit the impact from wildcard searches with too short wildcards,
+you might set it higher.
+</para>
+<para>
+Infixes must be at least 2 characters long, wildcards like '*a*' are not allowed
+for performance reasons. (While in theory it is possible to scan the entire dictionary,
+identify keywords matching on just a single character, expand '*a*' to an OR operator
+over 100,000+ keywords, and evaluate that expanded query, in practice this will very
+definitely kill your server.)
 </para>
 <bridgehead>Example:</bridgehead>
 <programlisting>
@@ -11712,7 +12055,7 @@ Starting with 2.2.9-release, the value can additionally enumerate per agent
 options such as:
 <itemizedlist>
 <listitem><para><link linkend="conf-ha-strategy">ha_strategy</link> - random,
-roundrobin, nodeads, noerrors (replces index <link linkend="conf-ha-strategy">ha_strategy</link>
+roundrobin, nodeads, noerrors (replaces index <link linkend="conf-ha-strategy">ha_strategy</link>
 for particular agent)</para></listitem>
 <listitem><para><link linkend="conf-agent-persistent">conn</link> - pconn,
 persistent (same as <link linkend="conf-agent-persistent">agent_persistent</link>
@@ -12708,7 +13051,7 @@ That is, regexps are applied to the raw source fields when indeixng,
 and to the raw search query text when searching.
 </para>
 <para>
-We use the <ulink url="http://code.google.com/p/re2/">RE2 engine</ulink>
+We use the <ulink url="https://github.com/google/re2">RE2 engine</ulink>
 to implement regexps. So when building from the source, the library must be
 installed in the system and Sphinx must be configured built with a
 <code>--with-re2</code> switch. Binary packages should come with RE2
@@ -13101,7 +13444,7 @@ Introduced in version 0.9.9-rc1.
 <para>
 The informal grammar for <code>listen</code> setting is:
 <programlisting>
-listen = ( address ":" port | port | path ) [ ":" protocol ]
+listen = ( address ":" port | port | path ) [ ":" protocol ] [ "_vip" ]
 </programlisting>
 I.e. you can specify either an IP address (or hostname) and port
 number, or just a port number, or Unix socket path. If you specify
@@ -13109,12 +13452,18 @@ port number but not the address, <code>searchd</code> will listen on
 all network interfaces. Unix path is identified by a leading slash.
 </para>
 <para>
-Starting with version 0.9.9-rc2, you can also specify a protocol
+You can also specify a protocol
 handler (listener) to be used for connections on this socket.
 Supported protocol values are 'sphinx' (Sphinx 0.9.x API protocol)
 and 'mysql41' (MySQL protocol used since 4.1 upto at least 5.1).
 More details on MySQL protocol support can be found in
 <xref linkend="sphinxql"/> section.
+</para>
+<para>
+Adding a "_vip" suffix to a protocol (for instance "sphinx_vip" or "mysql41_vip")
+makes all connections to that port bypass the thread pool and always forcibly
+create a new dedicated thread. That's useful for managing in case of a severe overload
+when the daemon would either stall or not let you connect via a regular port.
 </para>
 <bridgehead>Examples:</bridgehead>
 <programlisting>
@@ -13223,22 +13572,81 @@ client_timeout = 3600
 </programlisting>
 </sect2>
 
+<sect2 id="conf-sphinxql-timeout"><title>sphinxql_timeout</title>
+<para>
+Maximum time to wait between requests (in seconds) when using
+sphinxql interface. Optional, default is 15 minutes. Introduced in 2.3.2-beta.
+</para>
+<bridgehead>Example:</bridgehead>
+<programlisting>
+sphinxql_timeout = 900
+</programlisting>
+</sect2>
+
 
 <sect2 id="conf-max-children"><title>max_children</title>
 <para>
-Maximum amount of children to fork (or in other words, concurrent searches to run in parallel).
-Optional, default is 0 (unlimited).
+Maximum amount of worker threads (or in other words, concurrent queries to run in parallel).
+Optional, default is 0 (unlimited) in workers=threads, or 1.5 times the CPU cores count
+in workers=thread_pool mode.
 </para>
 <para>
-Useful to control server load. There will be no more than this much concurrent
-searches running, at all times. When the limit is reached, additional incoming
-clients are dismissed with temporarily failure (SEARCHD_RETRY) status code
-and a message stating that the server is maxed out.
+max_children imposes a hard limit on the number of threads working on user queries.
+There might still be additional internal threads doing maintenance tasks, but when it
+comes to user queries, it is no more than max_children concurrent threads (and queries)
+at all times.
+</para>
+<para>
+Note that in workers=threads mode a thread is allocated for every connection rather
+than an active query. So when there are 100 idle connections but only 2 active connections
+with currently running queries, that still accounts for 102 threads, all of them subject
+to max_children limit. So with a max_children set way too low, and pooled connections not
+reused well enough on the application side, you can effectively DOS your own server.
+When the limit is reached, any additional incoming connections will be dismissed with
+a temporary "maxed out" error immediately as they attempt to connect. Thus, in threads mode
+you should choose the max_children limit rather carefully, with not just the concurrent
+queries but also with potentially idle <emphasis>network connections</emphasis> in mind.
+</para>
+<para>
+Now, in workers=thread_pool mode the network connections are separated from query
+processing, so in the example above, 100 idle connections will all be handled by
+an internal network thread, and only the 2 actually active queries will be subject
+to max_children limit. When the limit is reached, any additional incoming
+<emphasis>connections</emphasis> will still be accepted, and any additional
+<emphasis>queries</emphasis> will <link linkend="conf-queue-max-length">get enqueued</link>
+until there are free worker threads.
+The queries will only start failing with a temporary
+Thus, in thread_pool mode it makes little sense to raise max_children much higher
+than the amount of CPU cores. Usually that will only hurt CPU contention and
+<emphasis>decrease</emphasis> the general throughput.
 </para>
 <bridgehead>Example:</bridgehead>
 <programlisting>
 max_children = 10
 </programlisting>
+</sect2>
+
+
+<sect2 id="conf-net-workers"><title>net_workers</title>
+<para>
+Number of network threads for workers=thread_pool mode, default is 1.
+</para>
+<para>
+Useful for extremely high query rates, when just 1 thread is not enough to
+manage all the incoming queries.
+</para>
+</sect2>
+
+
+<sect2 id="conf-queue-max-length"><title>queue_max_length</title>
+<para>
+Maximum pending queries queue length for workers=thread_pool mode, default is 0 (unlimited).
+</para>
+<para>
+In case of high CPU load thread pool queries queue may grow all the time.
+This directive lets you constrain queue length and start rejecting incoming queries
+at some point with a "maxed out" message.
+</para>
 </sect2>
 
 
@@ -13557,8 +13965,8 @@ subtree_hits_cache = 16M
 <sect2 id="conf-workers"><title>workers</title>
 <para>
 Multi-processing mode (MPM).
-Optional; allowed values are none, fork, prefork, and threads.
-Default is threads.
+Optional; allowed values are thread_pool, and threads.
+Default is thread_pool.
 Introduced in version 1.10-beta.
 </para>
 <para>
@@ -13566,50 +13974,36 @@ Lets you choose how <filename>searchd</filename> processes multiple
 concurrent requests. The possible values are:
 <variablelist>
 <varlistentry>
-    <term>none</term>
-    <listitem><para>All requests will be handled serially, one-by-one.
-        Prior to 1.x, this was the only mode available on Windows.
-    </para></listitem>
+<term>threads</term>
+<listitem><para>A new dedicated thread is created on every
+	incoming network connection. Subsequent queries on that
+	connection are handled by that thread. When a client
+	disconnected, the thread gets killed.
+</para></listitem>
 </varlistentry>
 <varlistentry>
-    <term>fork</term>
-    <listitem><para>A new child process will be forked to handle every
-        incoming request.
-    </para></listitem>
-</varlistentry>
-<varlistentry>
-    <term>prefork</term>
-    <listitem><para>On startup, <filename>searchd</filename> will pre-fork
-        a number of worker processes, and pass the incoming requests
-        to one of those children.
-    </para></listitem>
-</varlistentry>
-<varlistentry>
-    <term>threads</term>
-    <listitem><para>A new thread will be created to handle every
-        incoming request. This is the only mode compatible with
-        RT indexing backend. This is a default value.
-    </para></listitem>
+<term>thread_pool</term>
+<listitem><para>A worker threads pool is created on daemon startup.
+	An internal network thread handles all the incoming network
+	connections. Subsequent queries on any connection are then
+	put into a queue, and processed in order by the first avaialble
+	worker thread from the pool. No threads are normally created or killed,
+	neither for new connections, nor for new queries. Network thread
+	uses poll() and epoll() on Linux and WSAPoll on Windows (Vista and later).
+	This is the default mode.
+</para></listitem>
 </varlistentry>
 </variablelist>
 </para>
 <para>
-Historically, <filename>searchd</filename> used fork-based model,
-which generally performs OK but spends a noticeable amount of CPU
-in fork() system call when there's a high amount of (tiny) requests
-per second. Prefork mode was implemented to alleviate that; with
-prefork, worker processes are basically only created on startup
-and re-created on index rotation, somewhat reducing fork() call
-pressure.
-</para>
-<para>
-Threads mode was implemented along with RT backend and is required
-to use RT indexes. (Regular disk-based indexes work in all the
-available modes.)
+Thread pool is a newer, better, faster implementation of threads mode which
+does not suffer from overheads of creating a new thread per every new connection
+and managing a lot of parallel threads. As of 2.3.1, we still retain workers=threads
+for the transition period, but thread pool is scheduled to become the only MPM mode.
 </para>
 <bridgehead>Example:</bridgehead>
 <programlisting>
-workers = threads
+workers = thread_pool
 </programlisting>
 </sect2>
 
@@ -13639,10 +14033,6 @@ to 1x the number of cores is advised (creating more threads than cores
 will not improve query time). In case of mixed CPU/disk bound workload
 it might sometimes make sense to use more (so that all cores could be
 utilizes even when there are threads that wait for I/O completion).
-</para>
-<para>
-Note that <option>dist_threads</option> does <b>not</b> require
-threads MPM. You can perfectly use it with fork or prefork MPMs too.
 </para>
 <para>
 Starting with version 2.0.1-beta, building a batch of snippets
@@ -13955,34 +14345,6 @@ watchdog = 0 # disable watchdog
 </sect2>
 
 
-<sect2 id="conf-prefork-rotation-throttle"><title>prefork_rotation_throttle</title>
-<para>
-Delay between restarting preforked children on index rotation, in milliseconds.
-Optional, default is 0 (no delay).
-Introduced in version 2.0.2-beta.
-</para>
-<para>
-When running in <code><link linkend="conf-workers">workers</link> = prefork</code>
-mode, every index rotation needs to restart all children to propagate the newly
-loaded index data changes. Restarting all of them at once might put excessive
-strain on CPU and/or network connections. (For instance, when the application
-keeps a bunch of open persistent connections to different children, and all those
-children restart.) Those bursts can be throttled down with
-<option>prefork_rotation_throttle</option> directive. Note that
-the children will be restarted sequentially, and thus "old" results might
-persist for a few more seconds. For instance, if
-<option>prefork_rotation_throttle</option> is set to 50 (milliseconds), and
-there are 30 children, then the last one would only be <emphasis>actually</emphasis>
-restarted 1.5 seconds (50*30=1500 milliseconds) <emphasis>after</emphasis>
-the "rotation finished" message in the <filename>searchd</filename> event log.
-</para>
-<bridgehead>Example:</bridgehead>
-<programlisting>
-prefork_rotation_throttle = 50 # throttle children restarts by 50 msec each
-</programlisting>
-</sect2>
-
-
 <sect2 id="conf-sphinxql-state"><title>sphinxql_state</title>
 <para>
 Path to a file where current SphinxQL state will be serialized.
@@ -14231,6 +14593,18 @@ Integer, specifies how many times sphinx will try to connect and query remote ag
 fatal query error. Default is 0 (i.e. no retries). This value may be also specified on per-query basis using 
 'OPTION retry_count=XXX' clause. If per-query option exists, it will override the one specified in config.
 </para>
+<para>
+Note, that if you use <link linkend="conf-agent">agent mirrors</link> in definition of your distributed
+index, then before every attempt of connect sphinx will select different
+mirror, according to specified <link
+linkend="conf-ha-strategy">ha_strategy</link>specified.
+</para>
+<para>
+For example, if you have 10 mirrors, and surely know, that at least one of them
+alive, then you can definitely take the answer to a correct query,
+specifying options <code>ha_strategy = roundrobin</code> and
+<code>agent_retry_count = 9</code> in your config.
+</para>
 </sect2>
 
 <sect2 id="conf-agent-retry-delay"><title>agent_retry_delay</title>
@@ -14242,6 +14616,37 @@ on per-query basis using 'OPTION retry_delay=XXX' clause. If per-query option ex
 </para>
 </sect2>
 
+<sect2 id="conf-hostname-lookup"><title>hostname_lookup</title>
+<para>
+Hostnames renew strategy. By default, IP addresses of agent host names are cached at daemon start to avoid extra flood to DNS. 
+In some cases the IP can change dynamically (e.g. cloud hosting) and it might be desired to don't cache the IPs. Setting this option to 'request' disabled the caching and queries the DNS at each query.
+The IP addresses can also be manually renewed with <link linked="sphinxql-flush-hostnames">FLUSH HOSTNAMES</link> command. Added in 2.3.2-beta.
+</para>
+</sect2>
+
+<sect2 id="conf-qcache-max-bytes"><title>qcache_max_bytes</title>
+<para>
+Integer, in bytes. The maximum RAM allocated for cached result sets. Default is 0, meaning disabled. Added in 2.3.1-beta. Refer to <link linkend="qcache">query cache</link> for details.
+<programlisting>
+qcache_max_bytes = 16777216
+</programlisting>
+</para>
+</sect2>
+
+<sect2 id="conf-qcache-thresh-msec"><title>qcache_thresh_msec</title>
+<para>
+Integer, in milliseconds. The minimum wall time threshold for a query result to be cached.
+Defaults to 3000, or 3 seconds. 0 means cache everything. Added in 2.3.1-beta.
+Refer to <link linkend="qcache">query cache</link> for details.
+</para>
+</sect2>
+
+<sect2 id="conf-qcache-ttl-sec"><title>qcache_ttl_sec</title>
+<para>
+Integer, in seconds. The expiration period for a cached result set. Defaults to 60, or 1 minute.
+The minimum possible value is 1 second. Added in 2.3.1-beta. Refer to <link linkend="qcache">query cache</link> for details.
+</para>
+</sect2>
 
 </sect1>
 
@@ -14412,8 +14817,182 @@ plugin_dir = /usr/local/sphinx/lib
 -->
 
 <appendix id="changelog"><title>Sphinx revision history</title>
+
+<sect1 id="rel232"><title>Version 2.3.2-beta, 09 sep 2016</title>
+<bridgehead>Major features</bridgehead>
+<itemizedlist>
+<listitem>Searchd now uses mmap(). Daemon is available immediately and spawns a separate thread that loads the indexes. </listitem>
+<listitem>Built-in suggest using <link linked="sphinxql-call-qsuggest">CALL QSUGGEST</link> statement for indexes with infixing enabled and dict=keywords</listitem>
+<listitem><link linked="http">HTTP</link> protocol interface</listitem>
+</itemizedlist>
+<bridgehead>New functions and options</bridgehead>
+<itemizedlist>
+<listitem>added <link linked="expr-func-rand">RAND()</link>,<link linked="expr-func-hour">HOUR()</link>,<link linked="expr-func-minute">MINUTE()</link>,<link linked="expr-func-second">SECOND()</link> functions </listitem>
+<listitem>added<link linkend="sphinxql-flush-hostnames">FLUSH HOSTNAMES</link> SphinxQL statement and <link linked="conf-hostname-lookup">hostname_lookup</link> directive</listitem>
+<listitem><para>added <link linkend="sphinxql-reload-index">RELOAD INDEX</link> SphinxQL statement</para></listitem>
+<listitem><para>added <link linkend="conf-sphinxql-timeout">sphinxql_timeout</link> directive</para></listitem>
+</itemizedlist>
+<bridgehead>Changes and improvements</bridgehead>
+<itemizedlist>
+<listitem>changed <link linked="sphinxql-show-index-status">SHOW INDEX STATUS</link> now displays performed  number of queries, query times and found rows of last 1,5,15 minutes and total since daemon start</listitem>
+<listitem>changed <link linked="conf-retry-count">retry_count</link> behaviour</listitem>
+<listitem>added wildcard support and new options for <link linked="sphinxql-call-keywords">CALL KEYWORDS</link> SphinxQL statement</listitem>
+<listitem>faster RT inserts</listitem>
+<listitem>faster CSV/TSV indexing</listitem>
+<listitem>query cache is disabled by default</listitem>
+<listitem>indexer --keeep-attrs support specific path</listitem>
+<listitem>daemon now picks changed index path when it receives HUP</listitem>
+<listitem>added alias support for MVA attributes</listitem>
+<listitem>added SphinxQL support for comparison, IN, and BETWEEN conditions over ANY/ALL(mva)</listitem>
+<listitem>added explicit JSON type conversion in WHERE clause</listitem>
+</itemizedlist>
+
+<bridgehead>Bug fixes</bridgehead>
+<itemizedlist>
+<listitem><para>fixed #2503 update of attributes at index prevents binlog from clean</para></listitem>
+<listitem><para>fixed #2516 suggest for index with exact_word or morphology options</para></listitem>
+<listitem><para>fixed #2507 .NET Connector overflow exception (unsigned id support)</para></listitem>
+<listitem><para>Fixed initial round-robin counter</para></listitem>
+<listitem><para>Thread-safety checks added (backported)</para></listitem>
+<listitem><para>Refactored dl-staff</para></listitem>
+<listitem><para>added per-index statistics to 'show index status'</para></listitem>
+<listitem><para>fixed #2502 final calculation of expression at RT index (optimized calls count)</para></listitem>
+<listitem><para>Refactored ha-staff</para></listitem>
+<listitem><para>Added begin() and end() to CSphVector, CSphTightVector</para></listitem>
+<listitem><para>fixed error handle for API protocol net loop</para></listitem>
+<listitem><para>Fixed crash on exit (revealed in test 234 on Ubuntu 16.04)</para></listitem>
+<listitem><para>added token_filter and string list filter to API (php, python); set client ver to 32; fixed filter string list escape; updated token_filter plugin interface</para></listitem>
+<listitem><para>Backported behavior for pthread_mutex_timedlock, SCHED_IDLE</para></listitem>
+<listitem><para>Fast runaround for issue #877</para></listitem>
+<listitem><para>fixed #2496 profiler counts multiple sequential queries with thread_pool worker</para></listitem>
+<listitem><para>fixed #1825 added support for embedded zeroes in fields for pgsql, odbc data sources</para></listitem>
+<listitem><para>PHP sphinx api: renamed SphinxClient c-tr to __construct</para></listitem>
+<listitem><para>fixed #2461 crash of daemon with worker thread_pool on high load of fast queries</para></listitem>
+<listitem><para>fixed uninitialized m_bSync variable</para></listitem>
+<listitem><para>fixed #2461 crash of daemon with worker thread_pool on high load of fast queries</para></listitem>
+<listitem><para>fixed #2456 daemon stuck on rotating index due to high amount of search threads</para></listitem>
+<listitem><para>Fixed internal date calculation which caused different result of day(NUM) function in different timezones</para></listitem>
+<listitem><para>fixed #2400 crash of daemon on CALL KEYWORDS to RT index with disk chunks and regexp filter; added regression to test 194</para></listitem>
+<listitem><para>added #2393 feature wildcards for CALL KEYWORDS; bunch of options (fold_wildcards, fold_lemmas, fold_blended, expansion_limit, stats); added cases to test 254; fixed github #17</para></listitem>
+<listitem><para>fixed #2390 latency at workers thread_pool added net-loop wakeup on job done added send at the end of job then transfer left data to net-loop added spin-wait at polling wait added socket_pair emulation for windows version of net-loop added eventfd checks to configure</para></listitem>
+<listitem><para>added length() for expressions, disabled Expr_Time_c hashing, fixed test_253</para></listitem>
+<listitem><para>fixed Expr_Time and Expr_Timediff always returning empty strings</para></listitem>
+<listitem><para>fixed minor expression hash calc bug</para></listitem>
+<listitem><para>added a big test for GetHash in expressions; added Expr_Now_c; fixed template expression name check</para></listitem>
+<listitem><para>fixed several filters vs qcache issues</para></listitem>
+<listitem><para>check filter expression tree when caching queries</para></listitem>
+<listitem><para>fixed #2384 replace large index list at message to distributed index name; added regression to test 153</para></listitem>
+<listitem><para>fixed #2384 fold large index list at message from distributed index; added regression to test 153</para></listitem>
+<listitem><para>fixed #2372 ALL(mva) filter passed from master to agent as legacy filter; added regressions to test 244; set master version to 13</para></listitem>
+<listitem><para>fixed #2371 warning on query via API with filter on MVA attribute; added cases to test 244</para></listitem>
+<listitem><para>fixed query cache vs filters with expressions</para></listitem>
+<listitem><para>fixed #2351 ALTER RECONFIGURE skipped for RT index with only re2 or rlp changes; added regression as test 252 set binlog version to 6</para></listitem>
+<listitem><para>fixed daemon to work with --nodetach option after previous commit breaks it</para></listitem>
+<listitem><para>fixed #2358 mmap memory to be fork-less fixed bitvec copying fixing false socket shutdown at net-loop added ping handling to net-loop instead API command added feature to distributed index to break kill-list of local indexes sequence</para></listitem>
+<listitem><para>fixed a memory leak on inserts with aot enabled</para></listitem>
+<listitem><para>fixed #2062 attribute name shadows field with same name; added check at ALTER and RT index config; added regressions to test 214</para></listitem>
+<listitem><para>fixed #2330 daemon shutdown stopped waiting searching threads</para></listitem>
+<listitem><para>fixed dlopen bug on linux while reloading udf</para></listitem>
+<listitem><para>fixed (searchd.cpp split issues): stats mutex leak and crash of dashboard at distributed index setup due to config reload; added tests 248, 249</para></listitem>
+<listitem><para>fixed #2299 crash of indexer due to empty xmlpipe2 source with embedded schema; added regression to test 68</para></listitem>
+<listitem><para>fixed RLP vs non-CJK fields (missing trailing zero)</para></listitem>
+<listitem><para>refactored RLP to work as a field filter (preprocessor)</para></listitem>
+<listitem><para>fixed RLP enabled build</para></listitem>
+<listitem><para>fixed ubertest to pass on different linux platforms</para></listitem>
+<listitem><para>added SphinxQL support for comparison, IN, and BETWEEN conditions over ANY/ALL(mva); and added missing "ident NOT BETWEEN x AND y" syntax</para></listitem>
+<listitem><para>fixed #2277 network connection timeout overflow for agent with worker = thread_pool added test 243</para></listitem>
+<listitem><para>fixed mantis-2156 (COUNT(DISTINCT attr) does not work with strings)</para></listitem>
+<listitem><para>updated old links to code.google.com to new links to github.com</para></listitem>
+<listitem><para>fixed embedded zeroes in rt inserts</para></listitem>
+<listitem><para>fixed mantis-1825 (no support for embedded zeroes in fields)</para></listitem>
+<listitem><para>Removed CodeBlocks. Modified .gitignore for clion</para></listitem>
+<listitem><para>fixed examples version in documentation, rebuilt docs</para></listitem>
+<listitem><para>added #2262 new blend_mode trim_all added cases to test 192</para></listitem>
+<listitem><para>fixed #2261 ngram chars presence at charset_table, now it warns for such config added regression to tests fixed test 19</para></listitem>
+<listitem><para>fixed multiform handling (multiform + lemmatizer case) in CALL KEYWORDS</para></listitem>
+<listitem><para>fixed libre2.patch to be in sync with latest re2 changes</para></listitem>
+<listitem><para>Eliminated gcc warnings in http_parser.c. Eliminated msvc warning in sphinxquery.cpp.</para></listitem>
+<listitem><para>Windows yy.cmd synced with bash yy.sh script</para></listitem>
+<listitem><para>lex/bison files and rules fixed for bison >1.875</para></listitem>
+<listitem><para>do not create tokenizer for every document in batch insert, create it just once and reuse instead</para></listitem>
+<listitem><para>fixed bug #1766 (UPDATE does not correctly update negative values for bigint and float attributes)</para></listitem>
+<listitem><para>fixed hits duplicates at RT index on document indexing fixed aggregate depended expression at RT index fixed tests 162, 192, 205 to pass rt mode updated visual studio 2013 project file</para></listitem>
+<listitem><para>optimized away crazy memmove() in CSV/TSV parser, much faster CSV/TSV indexing (more than 10x on a synthetic test)</para></listitem>
+<listitem><para>field lengths are no longer required to be last in schema</para></listitem>
+<listitem><para>initial per-index field lengths support for RT, fixes test 217 --rt</para></listitem>
+<listitem><para>fixed CSphMatchVariant::ToDocid conversion to match plain index behavior (fixes test 047 --rt)</para></listitem>
+<listitem><para>fixed duplicates handling vs RT INSERT (first row wins now, not the last one)</para></listitem>
+<listitem><para>added fetched_* counters collection to rt (fixes test_209 in --rt mode)</para></listitem>
+<listitem><para>fixed keyword expansion in rt with docinfo=inline (fixes test_126 in --rt mode)</para></listitem>
+<listitem><para>unified CSphIndex::SetupQueryTokenizer and sphSetupQueryTokenizer implementations, fixes most (but not all) of test 165 --rt</para></listitem>
+<listitem><para>fixed off-by-1 in non-stemmed stopword check; fixed that lemmas got stemmed; fixed that wordforms could get applied twice through exact_dict; and rebuilt test 207 accordingly</para></listitem>
+<listitem><para>improved RT insert speed (%7 gain in my batch insert test case)</para></listitem>
+<listitem><para>indextool needs to preread checkpoints and infixes too</para></listitem>
+<listitem><para>fixed mlock option on caching index files</para></listitem>
+<listitem><para>fixed #2223 query cache last entry eviction during search cause daemon to hung</para></listitem>
+<listitem><para>Expr_Rand_c speedup and fixes, thread-safe XorShift64, updated test 125</para></listitem>
+<listitem><para>fixed #2053 added RAND() function</para></listitem>
+<listitem><para>fixed #2230 memory corruption at daemon on inserting data into RT with bad HTML markup added regression to tests</para></listitem>
+<listitem><para>fixed span length and lcs calculation in proximity queries</para></listitem>
+<listitem><para>fixed performance on reading a lot of small buffers</para></listitem>
+<listitem><para>fixed #2223 crash at watchdog shutdown on some OSes like centos, rhel</para></listitem>
+<listitem><para>optimize RT inserts</para></listitem>
+<listitem><para>refactoring</para></listitem>
+<listitem><para>improving insertion speed into RT index (5% gain in my test)</para></listitem>
+<listitem><para>refactoring, removed unneeded code</para></listitem>
+<listitem><para>added RELOAD INDEX to SphinxQL</para></listitem>
+<listitem><para>fixed #2209 prohibited order by MVA, added error message</para></listitem>
+<listitem><para>fixed undefined reference to void ISphOutputBuffer::SendT in release version</para></listitem>
+<listitem><para>new qcache defaults</para></listitem>
+<listitem><para>lets handle 32bit weights in qcache</para></listitem>
+<listitem><para>fixed a couple of memory leaks</para></listitem>
+<listitem><para>fixed typo in vs2008 proj; added lost files to codeblocks projects</para></listitem>
+<listitem><para>searchd.cpp splitted</para></listitem>
+<listitem><para>fixed agent dashboard setup due to remove of workers</para></listitem>
+<listitem><para>added test_232, positions coming out of the matching engine</para></listitem>
+<listitem><para>fixed several  bugs in qcache (bug #2191 and some more)</para></listitem>
+<listitem><para>use RAII on CSphMutex instead of separate initialization method, fixed clang warnings</para></listitem>
+<listitem><para>added feature #2195 memory mapping of all index files with separated caching thread daemon (re)start should be immediately and fix of 'old' ondisk* issue fixed update of attributes for indexes with ondisk* option got rig and prohibit 32bit to 64bit index conversion on load got rid of all shared memory code</para></listitem>
+<listitem><para>fixes in variant_match model generation (more compatible attr types, and better diff report)</para></listitem>
+<listitem><para>fixed HTML stripper handling of broken PI (processing instruction) tags</para></listitem>
+<listitem><para>added #2179 SphinxQL client timeout searchd section option sphinxql_timeout, default value is 900 seconds</para></listitem>
+
+</itemizedlist>
+</sect1>
+<sect1 id="rel231"><title>Version 2.3.1-beta, 03 mar 2015</title>
+<bridgehead>Major features</bridgehead>
+<itemizedlist>
+<listitem><para>added <link linkend="qcache">query cache</link></para></listitem>
+<listitem><para>added thread pool mode, and the respective <link linkend="conf-workers">workers = thread_pool</link>,
+	<link linkend="conf-max-children">max_children</link>, <link linkend="conf-net-workers">net_workers</link>,
+	<link linkend="conf-queue-max-length">queue_max_length</link> directives
+</para></listitem>
+<listitem><para>added vip suffixes to <link linkend="conf-listen">listener</link> protocols (sphinx_vip, mysql41_vip)</para></listitem>
+</itemizedlist>
+
+<bridgehead>Removals</bridgehead>
+<itemizedlist>
+<listitem><para>removed fork and prefork modes</para></listitem>
+<listitem><para>removed <option>prefork_rotation_throttle</option> directive</para></listitem>
+</itemizedlist>
+
+<bridgehead>Minor features</bridgehead>
+<itemizedlist>
+<listitem><para>added <link linkend="sphinxql-reload-plugins">RELOAD PLUGINS</link> SphinxQL statement</para></listitem>
+<listitem><para>added <link linkend="sphinxql-flush-attributes">FLUSH ATTRIBUTES</link> SphinxQL statement</para></listitem>
+</itemizedlist>
+
+<bridgehead>Bug fixes</bridgehead>
+<itemizedlist>
+<listitem><para>fixed #2167, <option>--keep_attrs</option> did not work with <option>--rotate</option></para></listitem>
+<listitem><para>fixed #2161, RT indexing could fail with <option>index_token_filter</option> because of multiple errorneous filter loads</para></listitem>
+<listitem><para>fixed #2154, crash in <code>ZONE</code> operator</para></listitem>
+</itemizedlist>
+
+</sect1>
+
 <sect1 id="rel2211"><title>Version 2.2.11-release, 19 jul 2016</title>
-<bridgehead>New features and changes</bridgehead>
+<bridgehead>Bug fixes</bridgehead>
 <itemizedlist>
 <listitem><para>fixed #2499 crash of daemon at phrase node with star shift; added regressions to test 41</para></listitem>
 <listitem><para>Backported RE2 patch and solutions from master</para></listitem>
@@ -14492,6 +15071,7 @@ plugin_dir = /usr/local/sphinx/lib
 <listitem><para>fixed indextool --check vs nested JSON objects</para></listitem>
 </itemizedlist>
 </sect1>
+
 <sect1 id="rel2210"><title>Version 2.2.10-release, 07 sep 2015</title>
 <bridgehead>New features and changes</bridgehead>
 <itemizedlist>
@@ -14620,6 +15200,7 @@ plugin_dir = /usr/local/sphinx/lib
 <listitem><para>fixed snippets crash with <link linkend="conf-blend-chars">blend chars</link> at the beginning of a string</para></listitem>
 </itemizedlist>
 </sect1>
+
 
 <sect1 id="rel226"><title>Version 2.2.6-release, 13 nov 2014</title>
 <bridgehead>Bug fixes</bridgehead>
@@ -15455,7 +16036,7 @@ plugin_dir = /usr/local/sphinx/lib
 <listitem><para>added <code>ORDER BY RAND()</code> support to <link linkend="sphinxql-select">SELECT</link> statement</para></listitem>
 <listitem><para>added Sphinx version to Windows crash log</para></listitem>
 <listitem><para>added RT index support to <link linkend="ref-indextool">indextool</link> <code>--check</code> (checks disk chunks only) (#877)</para></listitem>
-<listitem><para>added <link linkend="conf-prefork-rotation-throttle">prefork_rotation_throttle</link> directive (preforked children restart delay, in milliseconds) (#873)</para></listitem>
+<listitem><para>added <option>prefork_rotation_throttle</option> directive (preforked children restart delay, in milliseconds) (#873)</para></listitem>
 <listitem><para>added <link linkend="conf-on-file-field-error">on_file_field_error</link> directive (different <code>sql_file_field</code> handling modes)</para></listitem>
 <listitem><para>added manpages for all the programs</para></listitem>
 <listitem><para>added syslog logging support</para></listitem>

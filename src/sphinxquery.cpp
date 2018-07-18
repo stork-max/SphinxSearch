@@ -168,10 +168,20 @@ void yyerror ( XQParser_t * pParser, const char * sMessage )
 		pParser->m_pParsed->m_sParseError.SetSprintf ( "%s near '%s'", sMessage, pParser->m_pLastTokenStart );
 }
 
+#if USE_WINDOWS
+#pragma warning(push,1)
+#pragma warning(disable:4702) // unreachable code
+#endif
+
 #ifdef CMAKE_GENERATED_GRAMMAR
 	#include "bissphinxquery.c"
 #else
 	#include "yysphinxquery.c"
+#endif
+
+
+#if USE_WINDOWS
+#pragma warning(pop)
 #endif
 
 //////////////////////////////////////////////////////////////////////////
@@ -785,7 +795,6 @@ bool XQParser_t::GetNumber ( const char * p )
 			if ( sToken )
 			{
 				m_dIntTokens.Add ( sToken );
-				m_pDict->SetApplyMorph ( m_pTokenizer->GetMorphFlag() );
 				if ( m_pDict->GetWordID ( (BYTE*)sToken ) )
 					m_tPendingToken.tInt.iStrIndex = m_dIntTokens.GetLength()-1;
 				else
@@ -858,8 +867,12 @@ int XQParser_t::GetToken ( YYSTYPE * lvalp )
 		m_bWasBlended = m_pTokenizer->TokenIsBlended();
 		m_bEmpty = false;
 
+		int iPrevDeltaPos = 0;
+		if ( m_pPlugin && m_pPlugin->m_fnPushToken )
+			sToken = m_pPlugin->m_fnPushToken ( m_pPluginData, (char*)sToken, &iPrevDeltaPos, m_pTokenizer->GetTokenStart(), m_pTokenizer->GetTokenEnd() - m_pTokenizer->GetTokenStart() );
+
 		m_iPendingNulls = m_pTokenizer->GetOvershortCount() * m_iOvershortStep;
-		m_iAtomPos += 1+m_iPendingNulls;
+		m_iAtomPos += 1 + m_iPendingNulls + iPrevDeltaPos;
 
 		// handle NEAR (must be case-sensitive, and immediately followed by slash and int)
 		if ( sToken && p && !m_pTokenizer->m_bPhrase && strncmp ( p, "NEAR/", 5 )==0 && isdigit(p[5]) )
@@ -1079,7 +1092,6 @@ int XQParser_t::GetToken ( YYSTYPE * lvalp )
 		if ( m_pPlugin && m_pPlugin->m_fnPreMorph )
 			m_pPlugin->m_fnPreMorph ( m_pPluginData, (char*)sTmp, &iStopWord );
 
-		m_pDict->SetApplyMorph ( m_pTokenizer->GetMorphFlag() );
 		SphWordID_t uWordId = iStopWord ? 0 : m_pDict->GetWordID ( sTmp );
 
 		if ( uWordId && m_pPlugin && m_pPlugin->m_fnPostMorph )
@@ -1522,7 +1534,7 @@ void XQParser_t::DeleteNodesWOFields ( XQNode_t * pNode )
 					m_dSpawned.RemoveValue ( dChildren[i] );
 			} else
 			{
-				m_dSpawned.RemoveValue ( pChild );
+			m_dSpawned.RemoveValue ( pChild );
 			}
 
 			// this should be a leaf node
@@ -1683,25 +1695,8 @@ bool XQParser_t::Parse ( XQQuery_t & tParsed, const char * sQuery, const CSphQue
 	const CSphSchema * pSchema, CSphDict * pDict, const CSphIndexSettings & tSettings )
 {
 	// FIXME? might wanna verify somehow that pTokenizer has all the specials etc from sphSetupQueryTokenizer
-	CSphScopedPtr<ISphTokenizer> pMyTokenizer ( NULL );
+	CSphScopedPtr<ISphTokenizer> pMyTokenizer ( pTokenizer->Clone ( SPH_CLONE_QUERY_LIGHTWEIGHT ) );
 	CSphTightVector<char> dRlpBuf;
-
-#if USE_RLP
-	if ( !pTokenizer->GetRLPContext() )
-	{
-#endif
-		pMyTokenizer = pTokenizer->Clone ( SPH_CLONE_QUERY_LIGHTWEIGHT );
-#if USE_RLP
-	} else
-	{
-		const char * sProcessed = NULL;
-		if ( !ISphTokenizer::ProcessQueryRLP ( tSettings.m_sRLPContext.cstr(), sQuery, &sProcessed, dRlpBuf, tParsed.m_sParseError ) )
-			return false;
-
-		pMyTokenizer = pTokenizer->GetEmbeddedTokenizer()->Clone ( SPH_CLONE_QUERY_LIGHTWEIGHT );
-		sQuery = sProcessed;
-	}
-#endif
 
 	// most outcomes are errors
 	SafeDelete ( tParsed.m_pRoot );
@@ -4419,11 +4414,22 @@ void sphOptimizeBoolean ( XQNode_t ** ppRoot, const ISphKeywordsStat * pKeywords
 }
 
 
-void sphSetupQueryTokenizer ( ISphTokenizer * pTokenizer )
+void sphSetupQueryTokenizer ( ISphTokenizer * pTokenizer, bool bWildcards, bool bExact )
 {
-	pTokenizer->AddSpecials ( "()|-!@~\"/^$<" );
-	pTokenizer->AddPlainChar ( '?' );
-	pTokenizer->AddPlainChar ( '%' );
+	if ( bWildcards )
+	{
+		pTokenizer->AddPlainChar ( '*' );
+		pTokenizer->AddPlainChar ( '?' );
+		pTokenizer->AddPlainChar ( '%' );
+	}
+	if ( bExact )
+	{
+		pTokenizer->AddPlainChar ( '=' );
+		pTokenizer->AddSpecials ( "()|-!@~\"/^$<=" );
+	} else
+	{
+		pTokenizer->AddSpecials ( "()|-!@~\"/^$<" );
+	}
 }
 
 

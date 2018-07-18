@@ -1,7 +1,8 @@
 SRC_SPHINX = sphinx.cpp sphinxexcerpt.cpp sphinxquery.cpp \
 	sphinxsoundex.cpp sphinxmetaphone.cpp sphinxstemen.cpp sphinxstemru.cpp sphinxstemcz.cpp sphinxstemar.cpp \
 	sphinxutils.cpp sphinxstd.cpp sphinxsort.cpp sphinxexpr.cpp sphinxfilter.cpp \
-	sphinxsearch.cpp sphinxrt.cpp sphinxjson.cpp sphinxudf.c sphinxaot.cpp sphinxplugin.cpp
+	sphinxsearch.cpp sphinxrt.cpp sphinxjson.cpp sphinxudf.c sphinxaot.cpp sphinxplugin.cpp sphinxqcache.cpp \
+	sphinxrlp.cpp
 
 noinst_LIBRARIES = libsphinx.a
 libsphinx_a_SOURCES = $(SRC_SPHINX)
@@ -10,7 +11,7 @@ bin_PROGRAMS = indexer searchd spelldump indextool wordbreaker
 noinst_PROGRAMS = tests
 
 indexer_SOURCES = indexer.cpp
-searchd_SOURCES = searchd.cpp
+searchd_SOURCES = searchd.cpp searchdha.cpp http/http_parser.c searchdhttp.cpp
 spelldump_SOURCES = spelldump.cpp
 indextool_SOURCES = indextool.cpp
 tests_SOURCES = tests.cpp

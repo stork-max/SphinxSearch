@@ -1282,6 +1282,7 @@ struct CSphGroupSorterSettings
 	CSphAttrLocator		m_tLocCount;		///< locator for @count
 	CSphAttrLocator		m_tLocDistinct;		///< locator for @distinct
 	CSphAttrLocator		m_tDistinctLoc;		///< locator for attribute to compute count(distinct) for
+	ESphAttr			m_eDistinctAttr;	///< type of attribute to compute count(distinct) for
 	bool				m_bDistinct;		///< whether we need distinct
 	bool				m_bMVA;				///< whether we're grouping by MVA attribute
 	bool				m_bMva64;
@@ -1292,7 +1293,8 @@ struct CSphGroupSorterSettings
 	CSphAttrLocator		m_tLocGroupbyStr;	///< locator for @groupbystr
 
 	CSphGroupSorterSettings ()
-		: m_bDistinct ( false )
+		: m_eDistinctAttr ( SPH_ATTR_NONE )
+		, m_bDistinct ( false )
 		, m_bMVA ( false )
 		, m_bMva64 ( false )
 		, m_pGrouper ( NULL )
@@ -1650,6 +1652,20 @@ static void ExtractAggregates ( const CSphRsetSchema & tSchema, const CSphAttrLo
 }
 
 
+static SphAttr_t GetDistinctKey ( const CSphMatch & tEntry, const CSphAttrLocator & tDistinctLoc, ESphAttr eDistinctAttr, const BYTE * pStringBase )
+{
+	SphAttr_t tRes = tEntry.GetAttr ( tDistinctLoc );
+	if ( eDistinctAttr==SPH_ATTR_STRING )
+	{
+		const BYTE * pStr = NULL;
+		int iLen = sphUnpackStr ( pStringBase+tRes, &pStr );
+		tRes = pStr && iLen ? sphFNV64 ( pStr, iLen ) : 0;					
+	}
+
+	return tRes;
+}
+
+
 /// match sorter with k-buffering and group-by
 template < typename COMPGROUP, bool DISTINCT, bool NOTIFICATIONS >
 class CSphKBufferGroupSorter : public CSphMatchQueueTraits, protected CSphGroupSorterSettings
@@ -1673,6 +1689,7 @@ protected:
 	CSphVector<IAggrFunc *>		m_dAvgs;
 	const ISphFilter *			m_pAggrFilter; ///< aggregate filter for matches on flatten
 	MatchCloner_t				m_tPregroup;
+	const BYTE *				m_pStringBase;
 
 	static const int			GROUPBY_FACTOR = 4;	///< allocate this times more storage when doing group-by (k, as in k-buffer)
 
@@ -1688,6 +1705,7 @@ public:
 		, m_bSortByDistinct ( false )
 		, m_pComp ( pComp )
 		, m_pAggrFilter ( tSettings.m_pAggrFilterTrait )
+		, m_pStringBase ( NULL )
 	{
 		assert ( GROUPBY_FACTOR>1 );
 		assert ( DISTINCT==false || tSettings.m_tDistinctLoc.m_iBitOffset>=0 );
@@ -1743,6 +1761,7 @@ public:
 	/// set string pool pointer (for string+groupby sorters)
 	void SetStringPool ( const BYTE * pStrings )
 	{
+		m_pStringBase = pStrings;
 		m_pGrouper->SetStringPool ( pStrings );
 	}
 
@@ -1817,7 +1836,9 @@ public:
 			int iCount = 1;
 			if ( bGrouped )
 				iCount = (int)tEntry.GetAttr ( m_tLocDistinct );
-			m_tUniq.Add ( SphGroupedValue_t ( uGroupKey, tEntry.GetAttr ( m_tDistinctLoc ), iCount ) ); // OPTIMIZE! use simpler locator here?
+
+			SphAttr_t tAttr = GetDistinctKey ( tEntry, m_tDistinctLoc, m_eDistinctAttr, m_pStringBase );
+			m_tUniq.Add ( SphGroupedValue_t ( uGroupKey, tAttr, iCount ) ); // OPTIMIZE! use simpler locator here?
 		}
 
 		// it's a dupe anyway, so we shouldn't update total matches count
@@ -2066,6 +2087,7 @@ protected:
 	CSphVector<IAggrFunc *>		m_dAvgs;
 	const ISphFilter *			m_pAggrFilter; ///< aggregate filter for matches on flatten
 	MatchCloner_t				m_tPregroup;
+	const BYTE *				m_pStringBase;
 
 	static const int			GROUPBY_FACTOR = 4;	///< allocate this times more storage when doing group-by (k, as in k-buffer)
 
@@ -2114,6 +2136,7 @@ public:
 		, m_bSortByDistinct ( false )
 		, m_pComp ( pComp )
 		, m_pAggrFilter ( tSettings.m_pAggrFilterTrait )
+		, m_pStringBase ( NULL )
 	{
 		assert ( GROUPBY_FACTOR>1 );
 		assert ( DISTINCT==false || tSettings.m_tDistinctLoc.m_iBitOffset>=0 );
@@ -2142,7 +2165,7 @@ public:
 	}
 
 	// only for n-group
-	virtual int			GetDataLength () const
+	virtual int GetDataLength () const
 	{
 		return CSphMatchQueueTraits::GetDataLength()/2;
 	}
@@ -2195,6 +2218,7 @@ public:
 	/// set string pool pointer (for string+groupby sorters)
 	void SetStringPool ( const BYTE * pStrings )
 	{
+		m_pStringBase = pStrings;
 		m_pGrouper->SetStringPool ( pStrings );
 	}
 
@@ -2426,7 +2450,9 @@ public:
 			int iCount = 1;
 			if ( bGrouped )
 				iCount = (int)tEntry.GetAttr ( m_tLocDistinct );
-			m_tUniq.Add ( SphGroupedValue_t ( uGroupKey, tEntry.GetAttr ( m_tDistinctLoc ), iCount ) ); // OPTIMIZE! use simpler locator here?
+
+			SphAttr_t tAttr = GetDistinctKey ( tEntry, m_tDistinctLoc, m_eDistinctAttr, m_pStringBase );
+			m_tUniq.Add ( SphGroupedValue_t ( uGroupKey, tAttr, iCount ) ); // OPTIMIZE! use simpler locator here?
 		}
 		CHECKINTEGRITY();
 		// it's a dupe anyway, so we shouldn't update total matches count
@@ -3013,6 +3039,7 @@ protected:
 	CSphVector<IAggrFunc *>		m_dAggregates;
 	const ISphFilter *			m_pAggrFilter;				///< aggregate filter for matches on flatten
 	MatchCloner_t				m_tPregroup;
+	const BYTE *				m_pStringBase;
 
 public:
 	/// ctor
@@ -3020,6 +3047,7 @@ public:
 		: CSphGroupSorterSettings ( tSettings )
 		, m_bDataInitialized ( false )
 		, m_pAggrFilter ( tSettings.m_pAggrFilterTrait )
+		, m_pStringBase ( NULL )
 	{
 		assert ( DISTINCT==false || tSettings.m_tDistinctLoc.m_iBitOffset>=0 );
 		assert ( !pComp );
@@ -3080,8 +3108,9 @@ public:
 	}
 
 	/// set string pool pointer (for string+groupby sorters)
-	void SetStringPool ( const BYTE * )
+	void SetStringPool ( const BYTE * pStringBase )
 	{
+		m_pStringBase = pStringBase;
 	}
 
 	/// add entry to the queue
@@ -3189,7 +3218,9 @@ protected:
 			int iCount = 1;
 			if ( bGrouped )
 				iCount = (int)tEntry.GetAttr ( m_tLocDistinct );
-			m_dUniq.Add ( SphUngroupedValue_t ( tEntry.GetAttr ( m_tDistinctLoc ), iCount ) ); // OPTIMIZE! use simpler locator here?
+
+			SphAttr_t tAttr = GetDistinctKey ( tEntry, m_tDistinctLoc, m_eDistinctAttr, m_pStringBase );
+			m_dUniq.Add ( SphUngroupedValue_t ( tAttr, iCount ) ); // OPTIMIZE! use simpler locator here?
 		}
 
 		// it's a dupe anyway, so we shouldn't update total matches count
@@ -3895,6 +3926,7 @@ public:
 	bool				Setup ( const CSphQuery * pQuery, const ISphSchema & tSchema, CSphString & sError );
 	virtual float		Eval ( const CSphMatch & tMatch ) const;
 	virtual void		Command ( ESphExprCommand eCmd, void * pArg );
+	virtual uint64_t	GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable );
 
 protected:
 	CSphAttrLocator		m_tGeoLatLoc;
@@ -3963,6 +3995,18 @@ void ExprGeodist_t::Command ( ESphExprCommand eCmd, void * pArg )
 		static_cast < CSphVector<int>* >(pArg)->Add ( m_iLat );
 		static_cast < CSphVector<int>* >(pArg)->Add ( m_iLon );
 	}
+}
+
+uint64_t ExprGeodist_t::GetHash ( const ISphSchema & tSorterSchema, uint64_t uPrevHash, bool & bDisable )
+{
+	uint64_t uHash = sphCalcExprDepHash ( this, tSorterSchema, uPrevHash, bDisable );
+
+	static const char * EXPR_TAG = "ExprGeodist_t";
+	uHash = sphFNV64 ( EXPR_TAG, strlen(EXPR_TAG), uHash );
+	uHash = sphFNV64 ( &m_fGeoAnchorLat, sizeof(m_fGeoAnchorLat), uHash );
+	uHash = sphFNV64 ( &m_fGeoAnchorLong, sizeof(m_fGeoAnchorLong), uHash );
+
+	return uHash;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -4146,7 +4190,9 @@ static bool SetupGroupbySettings ( const CSphQuery * pQuery, const ISphSchema & 
 			return false;
 		}
 
-		tSettings.m_tDistinctLoc = tSchema.GetAttr ( iDistinct ).m_tLocator;
+		const CSphColumnInfo & tDistinctAttr = tSchema.GetAttr ( iDistinct );
+		tSettings.m_tDistinctLoc = tDistinctAttr.m_tLocator;
+		tSettings.m_eDistinctAttr = tDistinctAttr.m_eAttrType;
 	}
 
 	return true;
@@ -4218,6 +4264,12 @@ struct ExprSortStringAttrFixup_c : public ISphExpr
 	{
 		if ( eCmd==SPH_EXPR_SET_STRING_POOL )
 			m_pStrings = (const BYTE*)pArg;
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & )
+	{
+		assert ( 0 && "remap expressions in filters" );
+		return 0;
 	}
 };
 
@@ -4320,6 +4372,12 @@ struct ExprSortJson2StringPtr_c : public ISphExpr
 			if ( m_pExpr.Ptr() )
 				m_pExpr->Command ( eCmd, pArg );
 		}
+	}
+
+	virtual uint64_t GetHash ( const ISphSchema &, uint64_t, bool & )
+	{
+		assert ( 0 && "remap expression in filters" );
+		return 0;
 	}
 };
 
@@ -4990,7 +5048,7 @@ ISphMatchSorter * sphCreateQueue ( SphQueueSettings_t & tQueue )
 					return NULL;
 				}
 
-				if ( !bPlainAttr )
+				if ( !bPlainAttr && eAttr==SPH_ATTR_STRING )
 				{
 					bPlainAttr = true;
 					for ( int i=0; i<iItem && bPlainAttr; i++ )

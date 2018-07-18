@@ -50,6 +50,7 @@
 %token	TOK_NULL
 %token	TOK_FOR
 %token	TOK_FUNC_IN
+%token	TOK_FUNC_RAND
 
 %%
 
@@ -132,6 +133,8 @@ function:
 	| SEL_WEIGHT '(' ')'				{ $$ = $1; $$.m_iEnd = $3.m_iEnd; }
 	| SEL_TOKEN '(' expr for_loop ')'	{ $$ = $1; $$.m_iEnd = $5.m_iEnd; }
 	| TOK_FUNC_IN '(' arglist ')'		{ $$ = $1; $$.m_iEnd = $4.m_iEnd; }
+	| TOK_FUNC_RAND '(' ')'				{ $$ = $1; $$.m_iEnd = $3.m_iEnd; }
+	| TOK_FUNC_RAND '(' arglist ')'		{ $$ = $1; $$.m_iEnd = $4.m_iEnd; }
 	;
 
 arglist:
@@ -147,7 +150,7 @@ consthash:
 hash_key:
 	SEL_TOKEN
 	| TOK_FUNC_IN
-	;
+	;	
 	
 arg:
 	expr

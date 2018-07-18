@@ -1,14 +1,13 @@
-/* A Bison parser, made by GNU Bison 2.3.  */
+/* A Bison parser, made by GNU Bison 3.0.2.  */
 
-/* Skeleton interface for Bison's Yacc-like parsers in C
+/* Bison interface for Yacc-like parsers in C
 
-   Copyright (C) 1984, 1989, 1990, 2000, 2001, 2002, 2003, 2004, 2005, 2006
-   Free Software Foundation, Inc.
+   Copyright (C) 1984, 1989-1990, 2000-2013 Free Software Foundation, Inc.
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -16,9 +15,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.  */
 
 /* As a special exception, you may create a larger work that contains
    part or all of the Bison parser skeleton and distribute that work
@@ -33,279 +30,165 @@
    This special exception was added by the Free Software Foundation in
    version 2.2 of Bison.  */
 
-/* Tokens.  */
+#ifndef YY_YY_YYSPHINXQL_H_INCLUDED
+# define YY_YY_YYSPHINXQL_H_INCLUDED
+/* Debug traces.  */
+#ifndef YYDEBUG
+# define YYDEBUG 0
+#endif
+#if YYDEBUG
+extern int yydebug;
+#endif
+
+/* Token type.  */
 #ifndef YYTOKENTYPE
 # define YYTOKENTYPE
-   /* Put the tokens into the symbol table, so that GDB and other debuggers
-      know about them.  */
-   enum yytokentype {
-     TOK_IDENT = 258,
-     TOK_ATIDENT = 259,
-     TOK_CONST_INT = 260,
-     TOK_CONST_FLOAT = 261,
-     TOK_CONST_MVA = 262,
-     TOK_QUOTED_STRING = 263,
-     TOK_USERVAR = 264,
-     TOK_SYSVAR = 265,
-     TOK_CONST_STRINGS = 266,
-     TOK_BAD_NUMERIC = 267,
-     TOK_SUBKEY = 268,
-     TOK_DOT_NUMBER = 269,
-     TOK_ADD = 270,
-     TOK_AGENT = 271,
-     TOK_ALTER = 272,
-     TOK_AS = 273,
-     TOK_ASC = 274,
-     TOK_ATTACH = 275,
-     TOK_ATTRIBUTES = 276,
-     TOK_AVG = 277,
-     TOK_BEGIN = 278,
-     TOK_BETWEEN = 279,
-     TOK_BIGINT = 280,
-     TOK_BOOL = 281,
-     TOK_BY = 282,
-     TOK_CALL = 283,
-     TOK_CHARACTER = 284,
-     TOK_CHUNK = 285,
-     TOK_COLLATION = 286,
-     TOK_COLUMN = 287,
-     TOK_COMMIT = 288,
-     TOK_COMMITTED = 289,
-     TOK_COUNT = 290,
-     TOK_CREATE = 291,
-     TOK_DATABASES = 292,
-     TOK_DELETE = 293,
-     TOK_DESC = 294,
-     TOK_DESCRIBE = 295,
-     TOK_DISTINCT = 296,
-     TOK_DIV = 297,
-     TOK_DOUBLE = 298,
-     TOK_DROP = 299,
-     TOK_FACET = 300,
-     TOK_FALSE = 301,
-     TOK_FLOAT = 302,
-     TOK_FLUSH = 303,
-     TOK_FOR = 304,
-     TOK_FROM = 305,
-     TOK_FUNCTION = 306,
-     TOK_GLOBAL = 307,
-     TOK_GROUP = 308,
-     TOK_GROUPBY = 309,
-     TOK_GROUP_CONCAT = 310,
-     TOK_HAVING = 311,
-     TOK_ID = 312,
-     TOK_IN = 313,
-     TOK_INDEX = 314,
-     TOK_INSERT = 315,
-     TOK_INT = 316,
-     TOK_INTEGER = 317,
-     TOK_INTO = 318,
-     TOK_IS = 319,
-     TOK_ISOLATION = 320,
-     TOK_JSON = 321,
-     TOK_LEVEL = 322,
-     TOK_LIKE = 323,
-     TOK_LIMIT = 324,
-     TOK_MATCH = 325,
-     TOK_MAX = 326,
-     TOK_META = 327,
-     TOK_MIN = 328,
-     TOK_MOD = 329,
-     TOK_MULTI = 330,
-     TOK_MULTI64 = 331,
-     TOK_NAMES = 332,
-     TOK_NULL = 333,
-     TOK_OPTION = 334,
-     TOK_ORDER = 335,
-     TOK_OPTIMIZE = 336,
-     TOK_PLAN = 337,
-     TOK_PLUGIN = 338,
-     TOK_PLUGINS = 339,
-     TOK_PROFILE = 340,
-     TOK_RAND = 341,
-     TOK_RAMCHUNK = 342,
-     TOK_READ = 343,
-     TOK_RECONFIGURE = 344,
-     TOK_REPEATABLE = 345,
-     TOK_REPLACE = 346,
-     TOK_REMAP = 347,
-     TOK_RETURNS = 348,
-     TOK_ROLLBACK = 349,
-     TOK_RTINDEX = 350,
-     TOK_SELECT = 351,
-     TOK_SERIALIZABLE = 352,
-     TOK_SET = 353,
-     TOK_SETTINGS = 354,
-     TOK_SESSION = 355,
-     TOK_SHOW = 356,
-     TOK_SONAME = 357,
-     TOK_START = 358,
-     TOK_STATUS = 359,
-     TOK_STRING = 360,
-     TOK_SUM = 361,
-     TOK_TABLE = 362,
-     TOK_TABLES = 363,
-     TOK_THREADS = 364,
-     TOK_TO = 365,
-     TOK_TRANSACTION = 366,
-     TOK_TRUE = 367,
-     TOK_TRUNCATE = 368,
-     TOK_TYPE = 369,
-     TOK_UNCOMMITTED = 370,
-     TOK_UPDATE = 371,
-     TOK_VALUES = 372,
-     TOK_VARIABLES = 373,
-     TOK_WARNINGS = 374,
-     TOK_WEIGHT = 375,
-     TOK_WHERE = 376,
-     TOK_WITHIN = 377,
-     TOK_OR = 378,
-     TOK_AND = 379,
-     TOK_NE = 380,
-     TOK_GTE = 381,
-     TOK_LTE = 382,
-     TOK_NOT = 383,
-     TOK_NEG = 384
-   };
+  enum yytokentype
+  {
+    TOK_IDENT = 258,
+    TOK_ATIDENT = 259,
+    TOK_CONST_INT = 260,
+    TOK_CONST_FLOAT = 261,
+    TOK_CONST_MVA = 262,
+    TOK_QUOTED_STRING = 263,
+    TOK_USERVAR = 264,
+    TOK_SYSVAR = 265,
+    TOK_CONST_STRINGS = 266,
+    TOK_BAD_NUMERIC = 267,
+    TOK_SUBKEY = 268,
+    TOK_DOT_NUMBER = 269,
+    TOK_ADD = 270,
+    TOK_AGENT = 271,
+    TOK_ALTER = 272,
+    TOK_ALL = 273,
+    TOK_ANY = 274,
+    TOK_AS = 275,
+    TOK_ASC = 276,
+    TOK_ATTACH = 277,
+    TOK_ATTRIBUTES = 278,
+    TOK_AVG = 279,
+    TOK_BEGIN = 280,
+    TOK_BETWEEN = 281,
+    TOK_BIGINT = 282,
+    TOK_BOOL = 283,
+    TOK_BY = 284,
+    TOK_CALL = 285,
+    TOK_CHARACTER = 286,
+    TOK_CHUNK = 287,
+    TOK_COLLATION = 288,
+    TOK_COLUMN = 289,
+    TOK_COMMIT = 290,
+    TOK_COMMITTED = 291,
+    TOK_COUNT = 292,
+    TOK_CREATE = 293,
+    TOK_DATABASES = 294,
+    TOK_DELETE = 295,
+    TOK_DESC = 296,
+    TOK_DESCRIBE = 297,
+    TOK_DISTINCT = 298,
+    TOK_DIV = 299,
+    TOK_DOUBLE = 300,
+    TOK_DROP = 301,
+    TOK_FACET = 302,
+    TOK_FALSE = 303,
+    TOK_FLOAT = 304,
+    TOK_FLUSH = 305,
+    TOK_FOR = 306,
+    TOK_FROM = 307,
+    TOK_FUNCTION = 308,
+    TOK_GLOBAL = 309,
+    TOK_GROUP = 310,
+    TOK_GROUPBY = 311,
+    TOK_GROUP_CONCAT = 312,
+    TOK_HAVING = 313,
+    TOK_HOSTNAMES = 314,
+    TOK_ID = 315,
+    TOK_IN = 316,
+    TOK_INDEX = 317,
+    TOK_INDEXOF = 318,
+    TOK_INSERT = 319,
+    TOK_INT = 320,
+    TOK_INTEGER = 321,
+    TOK_INTO = 322,
+    TOK_IS = 323,
+    TOK_ISOLATION = 324,
+    TOK_JSON = 325,
+    TOK_LEVEL = 326,
+    TOK_LIKE = 327,
+    TOK_LIMIT = 328,
+    TOK_MATCH = 329,
+    TOK_MAX = 330,
+    TOK_META = 331,
+    TOK_MIN = 332,
+    TOK_MOD = 333,
+    TOK_MULTI = 334,
+    TOK_MULTI64 = 335,
+    TOK_NAMES = 336,
+    TOK_NULL = 337,
+    TOK_OPTION = 338,
+    TOK_ORDER = 339,
+    TOK_OPTIMIZE = 340,
+    TOK_PLAN = 341,
+    TOK_PLUGIN = 342,
+    TOK_PLUGINS = 343,
+    TOK_PROFILE = 344,
+    TOK_RAND = 345,
+    TOK_RAMCHUNK = 346,
+    TOK_READ = 347,
+    TOK_RECONFIGURE = 348,
+    TOK_RELOAD = 349,
+    TOK_REPEATABLE = 350,
+    TOK_REPLACE = 351,
+    TOK_REMAP = 352,
+    TOK_RETURNS = 353,
+    TOK_ROLLBACK = 354,
+    TOK_RTINDEX = 355,
+    TOK_SELECT = 356,
+    TOK_SERIALIZABLE = 357,
+    TOK_SET = 358,
+    TOK_SETTINGS = 359,
+    TOK_SESSION = 360,
+    TOK_SHOW = 361,
+    TOK_SONAME = 362,
+    TOK_START = 363,
+    TOK_STATUS = 364,
+    TOK_STRING = 365,
+    TOK_SUM = 366,
+    TOK_TABLE = 367,
+    TOK_TABLES = 368,
+    TOK_THREADS = 369,
+    TOK_TO = 370,
+    TOK_TRANSACTION = 371,
+    TOK_TRUE = 372,
+    TOK_TRUNCATE = 373,
+    TOK_TYPE = 374,
+    TOK_UNCOMMITTED = 375,
+    TOK_UPDATE = 376,
+    TOK_VALUES = 377,
+    TOK_VARIABLES = 378,
+    TOK_WARNINGS = 379,
+    TOK_WEIGHT = 380,
+    TOK_WHERE = 381,
+    TOK_WITHIN = 382,
+    TOK_OR = 383,
+    TOK_AND = 384,
+    TOK_NE = 385,
+    TOK_LTE = 386,
+    TOK_GTE = 387,
+    TOK_NOT = 388,
+    TOK_NEG = 389
+  };
 #endif
-/* Tokens.  */
-#define TOK_IDENT 258
-#define TOK_ATIDENT 259
-#define TOK_CONST_INT 260
-#define TOK_CONST_FLOAT 261
-#define TOK_CONST_MVA 262
-#define TOK_QUOTED_STRING 263
-#define TOK_USERVAR 264
-#define TOK_SYSVAR 265
-#define TOK_CONST_STRINGS 266
-#define TOK_BAD_NUMERIC 267
-#define TOK_SUBKEY 268
-#define TOK_DOT_NUMBER 269
-#define TOK_ADD 270
-#define TOK_AGENT 271
-#define TOK_ALTER 272
-#define TOK_AS 273
-#define TOK_ASC 274
-#define TOK_ATTACH 275
-#define TOK_ATTRIBUTES 276
-#define TOK_AVG 277
-#define TOK_BEGIN 278
-#define TOK_BETWEEN 279
-#define TOK_BIGINT 280
-#define TOK_BOOL 281
-#define TOK_BY 282
-#define TOK_CALL 283
-#define TOK_CHARACTER 284
-#define TOK_CHUNK 285
-#define TOK_COLLATION 286
-#define TOK_COLUMN 287
-#define TOK_COMMIT 288
-#define TOK_COMMITTED 289
-#define TOK_COUNT 290
-#define TOK_CREATE 291
-#define TOK_DATABASES 292
-#define TOK_DELETE 293
-#define TOK_DESC 294
-#define TOK_DESCRIBE 295
-#define TOK_DISTINCT 296
-#define TOK_DIV 297
-#define TOK_DOUBLE 298
-#define TOK_DROP 299
-#define TOK_FACET 300
-#define TOK_FALSE 301
-#define TOK_FLOAT 302
-#define TOK_FLUSH 303
-#define TOK_FOR 304
-#define TOK_FROM 305
-#define TOK_FUNCTION 306
-#define TOK_GLOBAL 307
-#define TOK_GROUP 308
-#define TOK_GROUPBY 309
-#define TOK_GROUP_CONCAT 310
-#define TOK_HAVING 311
-#define TOK_ID 312
-#define TOK_IN 313
-#define TOK_INDEX 314
-#define TOK_INSERT 315
-#define TOK_INT 316
-#define TOK_INTEGER 317
-#define TOK_INTO 318
-#define TOK_IS 319
-#define TOK_ISOLATION 320
-#define TOK_JSON 321
-#define TOK_LEVEL 322
-#define TOK_LIKE 323
-#define TOK_LIMIT 324
-#define TOK_MATCH 325
-#define TOK_MAX 326
-#define TOK_META 327
-#define TOK_MIN 328
-#define TOK_MOD 329
-#define TOK_MULTI 330
-#define TOK_MULTI64 331
-#define TOK_NAMES 332
-#define TOK_NULL 333
-#define TOK_OPTION 334
-#define TOK_ORDER 335
-#define TOK_OPTIMIZE 336
-#define TOK_PLAN 337
-#define TOK_PLUGIN 338
-#define TOK_PLUGINS 339
-#define TOK_PROFILE 340
-#define TOK_RAND 341
-#define TOK_RAMCHUNK 342
-#define TOK_READ 343
-#define TOK_RECONFIGURE 344
-#define TOK_REPEATABLE 345
-#define TOK_REPLACE 346
-#define TOK_REMAP 347
-#define TOK_RETURNS 348
-#define TOK_ROLLBACK 349
-#define TOK_RTINDEX 350
-#define TOK_SELECT 351
-#define TOK_SERIALIZABLE 352
-#define TOK_SET 353
-#define TOK_SETTINGS 354
-#define TOK_SESSION 355
-#define TOK_SHOW 356
-#define TOK_SONAME 357
-#define TOK_START 358
-#define TOK_STATUS 359
-#define TOK_STRING 360
-#define TOK_SUM 361
-#define TOK_TABLE 362
-#define TOK_TABLES 363
-#define TOK_THREADS 364
-#define TOK_TO 365
-#define TOK_TRANSACTION 366
-#define TOK_TRUE 367
-#define TOK_TRUNCATE 368
-#define TOK_TYPE 369
-#define TOK_UNCOMMITTED 370
-#define TOK_UPDATE 371
-#define TOK_VALUES 372
-#define TOK_VARIABLES 373
-#define TOK_WARNINGS 374
-#define TOK_WEIGHT 375
-#define TOK_WHERE 376
-#define TOK_WITHIN 377
-#define TOK_OR 378
-#define TOK_AND 379
-#define TOK_NE 380
-#define TOK_GTE 381
-#define TOK_LTE 382
-#define TOK_NOT 383
-#define TOK_NEG 384
 
-
-
-
+/* Value type.  */
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 typedef int YYSTYPE;
-# define yystype YYSTYPE /* obsolescent; will be withdrawn */
-# define YYSTYPE_IS_DECLARED 1
 # define YYSTYPE_IS_TRIVIAL 1
+# define YYSTYPE_IS_DECLARED 1
 #endif
 
 
 
+int yyparse (SqlParser_c * pParser);
+
+#endif /* !YY_YY_YYSPHINXQL_H_INCLUDED  */

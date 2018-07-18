@@ -11,6 +11,13 @@ ENDFOREACH ()
 set (CMAKE_USER_MAKE_RULES_OVERRIDE ${CMAKE_CURRENT_SOURCE_DIR}/cmake/c_flag_overrides.cmake)
 set (CMAKE_USER_MAKE_RULES_OVERRIDE_CXX ${CMAKE_CURRENT_SOURCE_DIR}/cmake/cxx_flag_overrides.cmake)
 
+# set default build type to RelWithDebInfo (if nothing else provided from outside yet)
+IF (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+	SET (CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Choose the type of build." FORCE)
+	set_property (CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
+			"MinSizeRel" "RelWithDebInfo")
+ENDIF ()
+
 PROJECT (SPHINXSEARCH)
 SET (SPHINXSEARCH_CMAKE_DIR "${SPHINXSEARCH_SOURCE_DIR}/cmake")
 SET (CMAKE_MODULE_PATH "${SPHINXSEARCH_SOURCE_DIR}/cmake")
@@ -126,13 +133,15 @@ else (WIN32)
 			set (SPLIT_SYMBOLS OFF)
 		elseif (NOT CMAKE_BUILD_TYPE MATCHES Debug)
 			set (CFLAGS "${CFLAGS} -O3 -g")
+		else()
+			set (CLANGFLAGS "-Wthread-safety" )
 		endif ()
 		set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${CFLAGS}")
-		set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CFLAGS} -fno-rtti")
+		set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CFLAGS} -fno-rtti -std=c++11")
 
 		# eliminate also some too noisy warnings from CLang
 		if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-register -Wno-missing-exception-spec")
+			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-register -Wno-missing-exception-spec -Wno-implicit-exception-spec-mismatch -Wno-invalid-offsetof ${CLANGFLAGS}")
 		endif()
 	endif (HAVE_GCC_LIKE)
 
@@ -157,7 +166,7 @@ else (WIN32)
 	include (ac_header_stdc)
 
 	message (STATUS "Checking for specific headers")
-	ac_check_headers ("execinfo.h;syslog.h")
+	ac_check_headers ("execinfo.h;syslog.h;sys/eventfd.h")
 
 	# mb use something better. The code below is copy-pasted from automake script
 	message (STATUS "Checking for library functions")
@@ -176,6 +185,7 @@ else (WIN32)
 	ac_check_funcs ("backtrace;backtrace_symbols")
 	ac_check_funcs ("mremap")
 	ac_check_funcs ("nanosleep;pthread_mutex_timedlock")
+	ac_check_funcs ( "eventfd")
 	check_function_exists (epoll_ctl HAVE_EPOLL)
 	ac_search_libs ("rt" "clock_gettime" HAVE_CLOCK_GETTIME EXTRA_LIBRARIES)
 
@@ -462,18 +472,7 @@ if (WITH_RE2)
 		# RE2 sources cloned. Now patch them, if necessary
 		if (NOT EXISTS "${RE2_BASEDIR}/is_patched.txt")
 			set (PATCH_FILE "${CMAKE_SOURCE_DIR}/libre2/libre2.patch")
-			if (WIN32) # prepare patch - change <LF> to <CR><LF>
-				if (NOT EXISTS ${RE2_BASEDIR}/libre2.patch)
-					unset (_CONTENT)
-					message(STATUS "Fix line endings in patch file")
-					FILE (READ "${PATCH_FILE}" _CONTENT)
-					# magic - \n to \n, not to \n\r!
-					STRING (REGEX REPLACE "\n" "\n" _CONTENT "${_CONTENT}")
-					FILE (WRITE ${RE2_BASEDIR}/libre2.patch "${_CONTENT}")
-				endif()
-				unset (PATCH_FILE)
-				set (PATCH_FILE ${RE2_BASEDIR}/libre2.patch)
-			endif(WIN32)
+
 			mark_as_advanced (PATCH_FILE)
 			message (STATUS "Patching RE2")
 			find_package (Git QUIET)
@@ -488,7 +487,7 @@ if (WITH_RE2)
 				if ( PATCH_PROG )
 					mark_as_advanced(PATCH_PROG)
 					execute_process (
-							COMMAND "${PATCH_PROG}" -p1 -i "${PATCH_FILE}"
+							COMMAND "${PATCH_PROG}" -p1 --binary -i "${PATCH_FILE}"
 							WORKING_DIRECTORY "${RE2_BASEDIR}"
 					)
 					file (WRITE "${RE2_BASEDIR}/is_patched.txt" "ok")
@@ -608,8 +607,18 @@ add_subdirectory (test)
 
 # a bit of installation stuff
 install (DIRECTORY api doc contrib DESTINATION share/doc COMPONENT doc)
-install (FILES COPYING INSTALL sphinx.conf.in sphinx-min.conf.in example.sql
-		DESTINATION share/doc COMPONENT doc)
+install (FILES example.sql DESTINATION share/doc COMPONENT doc)
+if (WIN32)
+ install (FILES COPYING INSTALL sphinx.conf.in sphinx-min.conf.in
+		DESTINATION . COMPONENT config)
+ install (DIRECTORY DESTINATION log COMPONENT config)
+ install (DIRECTORY DESTINATION data COMPONENT config)
+else()
+ install (FILES COPYING INSTALL sphinx.conf.in sphinx-min.conf.in
+		DESTINATION share/doc COMPONENT config)
+endif ()
+configure_file ("${SPHINXSEARCH_SOURCE_DIR}/COPYING"
+		"${SPHINXSEARCH_BINARY_DIR}/COPYING.txt")
 
 set (CPACK_SOURCE_IGNORE_FILES "/\\\\.idea/" "/\\\\.git/"
 		"/\\\\.svn/" "/autom4te\\\\.cache/" "/bin/" "/junk/" "/win/"
@@ -617,14 +626,22 @@ set (CPACK_SOURCE_IGNORE_FILES "/\\\\.idea/" "/\\\\.git/"
 set (CPACK_SOURCE_GENERATOR TGZ)
 
 set (CPACK_COMPONENT_APPLICATIONS_GROUP "bin")
+set (CPACK_COMPONENT_GROUP_BIN_DISPLAY_NAME "Runtime")
+set (CPACK_COMPONENT_APPLICATIONS_DISPLAY_NAME "Sphinx applications")
 set (CPACK_COMPONENT_CONFIG_GROUP "bin")
+set (CPACK_COMPONENT_CONFIG_DISPLAY_NAME "Configuration examples")
 set (CPACK_COMPONENT_DOC_GROUP "bin")
+set (CPACK_COMPONENT_DOC_DISPLAY_NAME "Documentation")
 set (CPACK_COMPONENT_DBGSYMBOLS_GROUP "dbg")
+set (CPACK_COMPONENT_GROUP_DBG_DISPLAY_NAME "Development")
+set (CPACK_COMPONENT_DBGSYMBOLS_DISPLAY_NAME "Debug symbols")
+set (CPACK_COMPONENT_DBGSYMBOLS_DEPENDS applications)
 set (CPACK_DEB_COMPONENT_INSTALL 1)
 set (CPACK_RPM_COMPONENT_INSTALL 1)
 set (CPACK_ARCHIVE_COMPONENT_INSTALL 1)
 set (CPACK_PACKAGE_NAME "sphinx")
 set (CPACK_PACKAGE_VENDOR "Sphinx Technologies Inc.")
+set (CPACK_RESOURCE_FILE_LICENSE "${SPHINXSEARCH_BINARY_DIR}/COPYING.txt")
 
 # fallback falues
 SET (CPACK_PACKAGE_VERSION_MAJOR 0)
@@ -665,15 +682,19 @@ SET (CPACK_RPM_PACKAGE_LICENSE "GNU General Public License v. 2 (GPL2)")
 set (FULL_VERSION "${CPACK_PACKAGE_VERSION}")
 
 if (WIN32)
-	set (CPACK_GENERATOR "ZIP")
+	set (SUGGEST_GENERATOR "ZIP")
 	set (SPHINX_ARCH "win32")
 	IF (CMAKE_EXE_LINKER_FLAGS MATCHES "x64")
 		set (SPHINX_ARCH "x64")
 	endif ()
 elseif(APPLE)
-	set (CPACK_GENERATOR "TGZ")
+	set (SUGGEST_GENERATOR "TGZ")
 else()
-	set (CPACK_GENERATOR "DEB")
+	set (SUGGEST_GENERATOR "DEB")
+endif ()
+
+if (NOT CPACK_GENERATOR)
+	set (CPACK_GENERATOR "${SUGGEST_GENERATOR}")
 endif ()
 
 if (SPHINX_TAG)

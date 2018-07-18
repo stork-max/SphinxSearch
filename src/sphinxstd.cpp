@@ -17,6 +17,8 @@
 #include "sphinxint.h"
 #include "sphinxutils.h"
 
+#include <math.h>
+
 #if !USE_WINDOWS
 #include <sys/time.h> // for gettimeofday
 
@@ -643,22 +645,13 @@ void * operator new [] ( size_t iSize )
 	return pResult;
 }
 
-#if USE_RE2
 void operator delete ( void * pPtr ) throw ()
-#else
-void operator delete ( void * pPtr )
-#endif
 {
 	if ( pPtr )
 		::free ( pPtr );
 }
 
-
-#if USE_RE2
 void operator delete [] ( void * pPtr ) throw ()
-#else
-void operator delete [] ( void * pPtr )
-#endif
 {
 	if ( pPtr )
 		::free ( pPtr );
@@ -794,213 +787,6 @@ DWORD sphRand ()
 	g_dRngState[0] = (DWORD)uSum;
 	return g_dRngState[0];
 }
-
-//////////////////////////////////////////////////////////////////////////
-
-#if !USE_WINDOWS
-CSphProcessSharedMutex::CSphProcessSharedMutex ( int iExtraSize )
-{
-	m_pMutex = NULL;
-
-#ifdef __FreeBSD__
-	CSphString sError, sWarning;
-	if ( !m_pStorage.Alloc ( sizeof(sem_t) + iExtraSize, sError, sWarning ) )
-	{
-		m_sError.SetSprintf ( "storage.alloc, error='%s', warning='%s'", sError.cstr(), sWarning.cstr() );
-		return;
-	}
-
-	m_pMutex = (sem_t*) m_pStorage.GetWritePtr ();
-	int iRes = sem_init ( m_pMutex, 1, 1 );
-	if ( iRes )
-	{
-		m_sError.SetSprintf ( "sem_init, errno=%d ", iRes );
-		m_pMutex = NULL;
-		m_pStorage.Reset ();
-		return;
-	}
-#else
-	pthread_mutexattr_t tAttr;
-	int iRes = pthread_mutexattr_init ( &tAttr );
-	if ( iRes )
-	{
-		m_sError.SetSprintf ( "pthread_mutexattr_init, errno=%d", iRes );
-		return;
-	}
-	iRes = pthread_mutexattr_setpshared ( &tAttr, PTHREAD_PROCESS_SHARED );
-	if ( iRes )
-	{
-		m_sError.SetSprintf ( "pthread_mutexattr_setpshared, errno = %d", iRes );
-		pthread_mutexattr_destroy ( &tAttr );
-		return;
-	}
-
-	CSphString sError, sWarning;
-	if ( !m_pStorage.Alloc ( sizeof(pthread_mutex_t) + iExtraSize, sError, sWarning ) )
-	{
-		m_sError.SetSprintf ( "storage.alloc, error='%s', warning='%s'", sError.cstr(), sWarning.cstr() );
-		pthread_mutexattr_destroy ( &tAttr );
-		return;
-	}
-
-	m_pMutex = (pthread_mutex_t*) m_pStorage.GetWritePtr ();
-	iRes = pthread_mutex_init ( m_pMutex, &tAttr );
-
-	if ( iRes )
-	{
-		m_sError.SetSprintf ( "pthread_mutex_init, errno=%d ", iRes );
-		pthread_mutexattr_destroy ( &tAttr );
-		m_pMutex = NULL;
-		m_pStorage.Reset ();
-		return;
-	}
-
-	iRes = pthread_mutexattr_destroy ( &tAttr );
-	if ( iRes )
-	{
-		m_sError.SetSprintf ( "pthread_mutexattr_destroy, errno = %d", iRes );
-		return;
-	}
-#endif // __FreeBSD__
-}
-
-CSphProcessSharedMutex::~CSphProcessSharedMutex()
-{
-	if ( m_pMutex )
-	{
-#ifdef __FreeBSD__
-		sem_destroy ( m_pMutex );
-#else
-		pthread_mutex_destroy ( m_pMutex );
-#endif
-		m_pMutex = NULL;
-	}
-}
-#else
-CSphProcessSharedMutex::CSphProcessSharedMutex ( int )
-{
-	m_tLock.Init();
-}
-
-CSphProcessSharedMutex::~CSphProcessSharedMutex()
-{
-	m_tLock.Done();
-}
-#endif
-
-
-void CSphProcessSharedMutex::Lock ()
-{
-#if !USE_WINDOWS
-#ifdef __FreeBSD__
-	if ( m_pMutex )
-		sem_wait ( m_pMutex );
-#else
-	if ( m_pMutex )
-		pthread_mutex_lock ( m_pMutex );
-#endif
-#else
-	m_tLock.Lock();
-#endif
-}
-
-
-void CSphProcessSharedMutex::Unlock ()
-{
-#if !USE_WINDOWS
-#ifdef __FreeBSD__
-	if ( m_pMutex )
-		sem_post ( m_pMutex );
-#else
-	if ( m_pMutex )
-		pthread_mutex_unlock ( m_pMutex );
-#endif
-#else
-	m_tLock.Unlock();
-#endif
-}
-
-
-#if USE_WINDOWS
-bool CSphProcessSharedMutex::TimedLock ( int ) const
-	{
-	return false;
-#else
-bool CSphProcessSharedMutex::TimedLock ( int tmSpin ) const
-{
-	if ( !m_pMutex )
-		return false;
-
-#ifdef __FreeBSD__
-	struct timespec tp;
-	clock_gettime ( CLOCK_REALTIME, &tp );
-
-	tp.tv_nsec += tmSpin * 1000;
-	if ( tp.tv_nsec > 1000000 )
-	{
-		int iDelta = (int)( tp.tv_nsec / 1000000 );
-		tp.tv_sec += iDelta * 1000000;
-		tp.tv_nsec -= iDelta * 1000000;
-	}
-
-	return ( sem_timedwait ( m_pMutex, &tp )==0 );
-#else
-#if defined(HAVE_PTHREAD_MUTEX_TIMEDLOCK) && defined(HAVE_CLOCK_GETTIME)
-	struct timespec tp;
-	clock_gettime ( CLOCK_REALTIME, &tp );
-
-	tp.tv_nsec += tmSpin * 1000;
-	if ( tp.tv_nsec > 1000000 )
-	{
-		int iDelta = (int)( tp.tv_nsec / 1000000 );
-		tp.tv_sec += iDelta * 1000000;
-		tp.tv_nsec -= iDelta * 1000000;
-	}
-
-	return ( pthread_mutex_timedlock ( m_pMutex, &tp )==0 );
-#else
-	int iRes = EBUSY;
-	int64_t tmTill = sphMicroTimer() + tmSpin;
-	do
-	{
-		iRes = pthread_mutex_trylock ( m_pMutex );
-		if ( iRes==EBUSY )
-			sphSleepMsec ( 0 );
-	} while ( iRes==EBUSY && sphMicroTimer()<tmTill );
-
-	if ( iRes==EBUSY )
-		iRes = pthread_mutex_trylock ( m_pMutex );
-
-	return iRes==0;
-#endif // HAVE_PTHREAD_MUTEX_TIMEDLOCK && HAVE_CLOCK_GETTIME
-#endif // __FreeBSD__
-#endif // USE_WINDOWS
-}
-
-
-BYTE * CSphProcessSharedMutex::GetSharedData() const
-{
-#if !USE_WINDOWS
-#ifdef __FreeBSD__
-	return m_pStorage.GetWritePtr () + sizeof ( sem_t );
-#else
-	return m_pStorage.GetWritePtr () + sizeof ( pthread_mutex_t );
-#endif
-#else
-	return NULL;
-#endif
-}
-
-
-const char * CSphProcessSharedMutex::GetError() const
-{
-	const char * sError = NULL;
-#if !USE_WINDOWS
-	sError = m_sError.cstr();
-#endif
-	return sError;
-}
-
 
 //////////////////////////////////////////////////////////////////////////
 // THREADING FUNCTIONS
@@ -1310,33 +1096,33 @@ bool sphIsLtLib()
 
 // Windows mutex implementation
 
-bool CSphMutex::Init ()
+CSphMutex::CSphMutex ()
 {
-	assert ( !m_bInitialized );
 	m_hMutex = CreateMutex ( NULL, FALSE, NULL );
-	m_bInitialized = ( m_hMutex!=NULL );
-	return m_bInitialized;
+	if ( !m_hMutex )
+		sphDie ( "CreateMutex() failed" );
 }
 
-bool CSphMutex::Done ()
+CSphMutex::~CSphMutex ()
 {
-	if ( !m_bInitialized )
-		return true;
-
-	m_bInitialized = false;
-	return CloseHandle ( m_hMutex )==TRUE;
+	if ( CloseHandle ( m_hMutex )==FALSE )
+		sphDie ( "CloseHandle() failed" );
 }
 
 bool CSphMutex::Lock ()
 {
-	assert ( m_bInitialized );
 	DWORD uWait = WaitForSingleObject ( m_hMutex, INFINITE );
+	return ( uWait!=WAIT_FAILED && uWait!=WAIT_TIMEOUT );
+}
+
+bool CSphMutex::TimedLock ( int iMsec )
+{
+	DWORD uWait = WaitForSingleObject ( m_hMutex, iMsec );
 	return ( uWait!=WAIT_FAILED && uWait!=WAIT_TIMEOUT );
 }
 
 bool CSphMutex::Unlock ()
 {
-	assert ( m_bInitialized );
 	return ReleaseMutex ( m_hMutex )==TRUE;
 }
 
@@ -1374,35 +1160,100 @@ bool CSphAutoEvent::WaitEvent()
 	return !( uWait==WAIT_FAILED || uWait==WAIT_TIMEOUT );
 }
 
-#else
+CSphSemaphore::CSphSemaphore ()
+	: m_bInitialized ( false )
+{
+}
 
-// UNIX mutex implementation
-
-bool CSphMutex::Init ()
+CSphSemaphore::~CSphSemaphore ()
 {
 	assert ( !m_bInitialized );
-	m_bInitialized = ( pthread_mutex_init ( &m_tMutex, NULL )==0 );
+}
+
+bool CSphSemaphore::Init(const char*)
+{
+	assert ( !m_bInitialized );
+	m_hSem = CreateSemaphore ( NULL, 0, INT_MAX, NULL );
+	m_bInitialized = ( m_hSem!=NULL );
 	return m_bInitialized;
 }
 
-bool CSphMutex::Done ()
+bool CSphSemaphore::Done()
 {
 	if ( !m_bInitialized )
 		return true;
 
 	m_bInitialized = false;
-	return pthread_mutex_destroy ( &m_tMutex )==0;
+	return ( CloseHandle ( m_hSem )==TRUE );
+}
+
+void CSphSemaphore::Post()
+{
+	assert ( m_bInitialized );
+	ReleaseSemaphore ( m_hSem, 1, NULL );
+}
+
+bool CSphSemaphore::Wait()
+{
+	assert ( m_bInitialized );
+	DWORD uWait = WaitForSingleObject ( m_hSem, INFINITE );
+	return !( uWait==WAIT_FAILED || uWait==WAIT_TIMEOUT );
+}
+
+#else
+
+// UNIX mutex implementation
+
+CSphMutex::CSphMutex() {
+	if ( pthread_mutex_init ( &m_tMutex, NULL ) )
+		sphDie ( "pthread_mutex_init() failed %s", strerror ( errno ) );
+}
+
+CSphMutex::~CSphMutex() {
+	if ( pthread_mutex_destroy ( &m_tMutex ) )
+		sphDie ( "pthread_mutex_destroy() failed %s", strerror ( errno ) );
 }
 
 bool CSphMutex::Lock ()
 {
-	assert ( m_bInitialized );
 	return ( pthread_mutex_lock ( &m_tMutex )==0 );
+}
+
+bool CSphMutex::TimedLock ( int iMsec )
+{
+
+// pthread_mutex_timedlock is not available on Mac Os. Fallback to lock without a timer.
+#if defined (HAVE_PTHREAD_MUTEX_TIMEDLOCK)
+	struct timespec ts;
+	clock_gettime ( CLOCK_REALTIME, &ts );
+
+	int ns = ts.tv_nsec + ( iMsec % 1000 )*1000000;
+	ts.tv_sec += ( ns / 1000000000 ) + ( iMsec / 1000 );
+	ts.tv_nsec = ( ns % 1000000000 );
+
+	int iRes = pthread_mutex_timedlock ( &m_tMutex, &ts );
+	return iRes==0;
+
+#else
+	int iRes = EBUSY;
+	int64_t tmTill = sphMicroTimer () + iMsec;
+	do
+	{
+		iRes = pthread_mutex_trylock ( &m_tMutex );
+		if ( iRes!=EBUSY )
+			break;
+		sphSleepMsec ( 1 );
+	} while ( sphMicroTimer ()<tmTill );
+	if ( iRes==EBUSY )
+		iRes = pthread_mutex_trylock ( &m_tMutex );
+
+	return iRes!=EBUSY;
+
+#endif
 }
 
 bool CSphMutex::Unlock ()
 {
-	assert ( m_bInitialized );
 	return ( pthread_mutex_unlock ( &m_tMutex )==0 );
 }
 
@@ -1445,6 +1296,54 @@ bool CSphAutoEvent::WaitEvent ()
 	m_bSent = false;
 	pthread_mutex_unlock ( m_pMutex );
 	return true;
+}
+
+
+CSphSemaphore::CSphSemaphore ()
+	: m_bInitialized ( false )
+	, m_pSem ( NULL )
+{
+}
+
+
+CSphSemaphore::~CSphSemaphore ()
+{
+	assert ( !m_bInitialized );
+	sem_close ( m_pSem );
+}
+
+
+bool CSphSemaphore::Init (const char* sName)
+{
+	assert ( !m_bInitialized );
+	m_pSem = sem_open (sName, O_CREAT, 0, 0);
+	m_sName = sName;
+	m_bInitialized = ( m_pSem!=SEM_FAILED );
+	return m_bInitialized;
+}
+
+bool CSphSemaphore::Done ()
+{
+	if ( !m_bInitialized )
+		return true;
+
+	m_bInitialized = false;
+	int iRes = sem_close ( m_pSem );
+	sem_unlink (m_sName.cstr());
+	return ( iRes==0 );
+}
+
+void CSphSemaphore::Post()
+{
+	assert ( m_bInitialized );
+	sem_post ( m_pSem );
+}
+
+bool CSphSemaphore::Wait ()
+{
+	assert ( m_bInitialized );
+	int iRes = sem_wait ( m_pSem );
+	return ( iRes==0 );
 }
 
 #endif
@@ -1502,12 +1401,6 @@ bool CSphRwlock::Done ()
 	m_iReaders = 0;
 	m_bInitialized = false;
 	return true;
-}
-
-
-const char * CSphRwlock::GetError () const
-{
-	return m_sError.cstr();
 }
 
 
@@ -1589,63 +1482,40 @@ CSphRwlock::CSphRwlock ()
 	: m_bInitialized ( false )
 {}
 
-bool CSphRwlock::Init ( bool bProcessShared )
+bool CSphRwlock::Init ( bool bPreferWriter )
 {
 	assert ( !m_bInitialized );
 
-#ifdef __FreeBSD__
-	if ( bProcessShared )
+	pthread_rwlockattr_t tAttr;
+	pthread_rwlockattr_t * pAttr = NULL;
+
+// Mac OS X knows nothing about PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
+#ifndef __APPLE__
+	while ( bPreferWriter )
 	{
-		m_sError = "process shared rwlock is not supported by FreeBSD";
-		return false;
+		bool bOk = ( pthread_rwlockattr_init ( &tAttr )==0 );
+		assert ( bOk );
+		if ( !bOk )
+			break;
+
+		bOk = ( pthread_rwlockattr_setkind_np ( &tAttr, PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP )==0 );
+		assert ( bOk );
+		if ( !bOk )
+		{
+			pthread_rwlockattr_destroy ( &tAttr );
+			break;
+		}
+
+		pAttr = &tAttr;
+		break;
 	}
 #endif
+	m_bInitialized = ( pthread_rwlock_init ( &m_tLock, pAttr )==0 );
 
-	pthread_rwlockattr_t tAttr;
-	pthread_rwlockattr_t * pAttrUsed = NULL;
-	int iRes;
+	if ( pAttr )
+		pthread_rwlockattr_destroy ( &tAttr );
 
-	if ( bProcessShared )
-	{
-		iRes = pthread_rwlockattr_init ( &tAttr );
-		if ( iRes )
-		{
-			m_sError.SetSprintf ( "pthread_rwlockattr_init, errno=%d", iRes );
-			return false;
-		}
-		iRes = pthread_rwlockattr_setpshared ( &tAttr, PTHREAD_PROCESS_SHARED );
-		if ( iRes )
-		{
-			m_sError.SetSprintf ( "pthread_rwlockattr_setpshared, errno = %d", iRes );
-			pthread_rwlockattr_destroy ( &tAttr );
-			return false;
-		}
-
-		pAttrUsed = &tAttr;
-	}
-
-	iRes = pthread_rwlock_init ( &m_tLock, pAttrUsed );
-	if ( iRes )
-	{
-		m_sError.SetSprintf ( "pthread_rwlock_init, errno = %d", iRes );
-		if ( pAttrUsed )
-			pthread_rwlockattr_destroy ( pAttrUsed );
-		return false;
-	}
-
-	if ( pAttrUsed )
-	{
-		iRes = pthread_rwlockattr_destroy ( pAttrUsed );
-		if ( iRes )
-		{
-			m_sError.SetSprintf ( "pthread_rwlockattr_destroy, errno = %d", iRes );
-			return false;
-		}
-	}
-
-	m_bInitialized = true;
-
-	return true;
+	return m_bInitialized;
 }
 
 bool CSphRwlock::Done ()
@@ -1655,11 +1525,6 @@ bool CSphRwlock::Done ()
 
 	m_bInitialized = !( pthread_rwlock_destroy ( &m_tLock )==0 );
 	return !m_bInitialized;
-}
-
-const char * CSphRwlock::GetError () const
-{
-	return m_sError.cstr();
 }
 
 bool CSphRwlock::ReadLock ()
@@ -1834,20 +1699,76 @@ DWORD sphCRC32 ( const void * s, int iLen, DWORD uPrevCRC )
 }
 
 #if USE_WINDOWS
-template<>
-CSphAtomic<long>::operator long()
+template<> long CSphAtomic_T<long>::GetValue () const
 {
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
 	return InterlockedExchangeAdd ( &m_iValue, 0 );
 }
-template<>
-long CSphAtomic<long>::Inc()
+
+template<> int64_t CSphAtomic_T<int64_t>::GetValue () const
 {
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedExchangeAdd64 ( &m_iValue, 0 );
+}
+
+template<> long CSphAtomic_T<long>::Inc ()
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
 	return InterlockedIncrement ( &m_iValue )-1;
 }
-template<>
-long CSphAtomic<long>::Dec()
+
+template<> int64_t CSphAtomic_T<int64_t>::Inc ()
 {
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedIncrement64 ( &m_iValue )-1;
+}
+
+template<> long CSphAtomic_T<long>::Dec ()
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
 	return InterlockedDecrement ( &m_iValue )+1;
+}
+
+template<> int64_t CSphAtomic_T<int64_t>::Dec ()
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedDecrement64 ( &m_iValue )+1;
+}
+
+template<> long CSphAtomic_T<long>::Add ( long iValue )
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedExchangeAdd ( &m_iValue, iValue );
+}
+
+template<> int64_t CSphAtomic_T<int64_t>::Add ( int64_t iValue )
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedExchangeAdd64 ( &m_iValue, iValue );
+}
+
+template<> long CSphAtomic_T<long>::Sub ( long iValue )
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedExchangeAdd ( &m_iValue, -iValue );
+}
+
+template<> int64_t CSphAtomic_T<int64_t>::Sub ( int64_t iValue )
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	return InterlockedExchangeAdd64 ( &m_iValue, -iValue );
+}
+
+template<> void CSphAtomic_T<long>::SetValue ( long iValue )
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	InterlockedExchange ( &m_iValue, iValue );
+}
+
+template<> void CSphAtomic_T<int64_t>::SetValue ( int64_t iValue )
+{
+	assert ( ( ( (size_t) &m_iValue )%( sizeof ( &m_iValue ) ) )==0 && "unaligned atomic!" );
+	InterlockedExchange64 ( &m_iValue, iValue );
 }
 #endif
 
@@ -1876,6 +1797,403 @@ const char*		sphCheckEndian()
 		return sErrorMsg;
 	return NULL;
 }
+
+struct ThdJob_t
+{
+	ISphJob *	m_pItem;
+	ThdJob_t *	m_pNext;
+	ThdJob_t *	m_pPrev;
+
+	ThdJob_t ()
+		: m_pItem ( NULL )
+		, m_pNext ( NULL )
+		, m_pPrev ( NULL )
+	{}
+
+	~ThdJob_t ()
+	{
+		SafeDelete ( m_pItem );
+	}
+};
+
+#ifdef USE_VTUNE
+#include "ittnotify.h"
+static void SetThdName ( const char * )
+{
+	__itt_thread_set_name ( "job" );
+}
+#else
+static void SetThdName ( const char * ) {}
+#endif
+
+class CSphThdPool : public ISphThdPool
+{
+	CSphSemaphore					m_tWorkSem;
+	CSphMutex						m_tJobLock;
+
+	CSphFixedVector<SphThread_t>	m_dWorkers;
+	ThdJob_t *						m_pHead;
+	ThdJob_t *						m_pTail;
+
+	volatile bool					m_bShutdown;
+
+	CSphAtomic						m_tStatActiveWorkers;
+	int								m_iStatQueuedJobs;
+
+public:
+	explicit CSphThdPool ( int iThreads, const char* sName )
+		: m_dWorkers ( 0 )
+		, m_pHead ( NULL )
+		, m_pTail ( NULL )
+		, m_bShutdown ( false )
+		, m_iStatQueuedJobs ( 0 )
+	{
+		Verify ( m_tWorkSem.Init (sName) );
+
+		iThreads = Max ( iThreads, 1 );
+		m_dWorkers.Reset ( iThreads );
+		ARRAY_FOREACH ( i, m_dWorkers )
+		{
+			sphThreadCreate ( m_dWorkers.Begin() + i, Tick, this );
+		}
+	}
+
+	virtual ~CSphThdPool ()
+	{
+		Shutdown();
+
+		Verify ( m_tWorkSem.Done() );
+	}
+
+	virtual void Shutdown ()
+	{
+		if ( m_bShutdown )
+			return;
+
+		m_bShutdown = true;
+
+		ARRAY_FOREACH ( i, m_dWorkers )
+			m_tWorkSem.Post();
+
+		ARRAY_FOREACH ( i, m_dWorkers )
+			sphThreadJoin ( m_dWorkers.Begin()+i );
+
+		while ( m_pHead && m_pHead!=m_pTail )
+		{
+			ThdJob_t * pNext = m_pHead->m_pNext;
+			SafeDelete ( m_pHead );
+			m_pHead = pNext;
+		}
+	}
+
+	virtual void AddJob ( ISphJob * pItem )
+	{
+		assert ( pItem );
+		assert ( !m_bShutdown );
+
+		ThdJob_t * pJob = new ThdJob_t;
+		pJob->m_pItem = pItem;
+
+		m_tJobLock.Lock();
+
+		if ( !m_pHead )
+		{
+			m_pHead = pJob;
+			m_pTail = pJob;
+		} else
+		{
+			pJob->m_pNext = m_pHead;
+			m_pHead->m_pPrev = pJob;
+			m_pHead = pJob;
+		}
+
+		m_iStatQueuedJobs++;
+
+		m_tWorkSem.Post();
+		m_tJobLock.Unlock();
+	}
+
+	virtual void StartJob ( ISphJob * pItem )
+	{
+		// FIXME!!! start thread only in case of no workers available to offload call site
+		SphThread_t tThd;
+		sphThreadCreate ( &tThd, Start, pItem, true );
+	}
+
+private:
+	static void Tick ( void * pArg )
+	{
+		SetThdName ( "job" );
+
+		CSphThdPool * pPool = (CSphThdPool *)pArg;
+
+		while ( !pPool->m_bShutdown )
+		{
+			pPool->m_tWorkSem.Wait();
+
+			if ( pPool->m_bShutdown )
+				break;
+
+			pPool->m_tJobLock.Lock();
+
+			ThdJob_t * pJob = pPool->m_pTail;
+			if ( pPool->m_pHead==pPool->m_pTail ) // either 0 or 1 job case
+			{
+				pPool->m_pHead = pPool->m_pTail = NULL;
+			} else
+			{
+				pJob->m_pPrev->m_pNext = NULL;
+				pPool->m_pTail = pJob->m_pPrev;
+			}
+
+			if ( pJob )
+				pPool->m_iStatQueuedJobs--;
+
+			pPool->m_tJobLock.Unlock();
+
+			if ( !pJob )
+				continue;
+
+			pPool->m_tStatActiveWorkers.Inc();
+
+			pJob->m_pItem->Call();
+			SafeDelete ( pJob );
+
+			pPool->m_tStatActiveWorkers.Dec();
+
+			// FIXME!!! work stealing case (check another job prior going to sem)
+		}
+	}
+
+	static void Start ( void * pArg )
+	{
+		ISphJob * pJob = (ISphJob *)pArg;
+		if ( pJob )
+			pJob->Call();
+		SafeDelete ( pJob );
+	}
+
+	virtual int GetActiveWorkerCount () const
+	{
+		return m_tStatActiveWorkers.GetValue();
+	}
+
+	virtual int GetTotalWorkerCount () const
+	{
+		return m_dWorkers.GetLength();
+	}
+
+	virtual int GetQueueLength () const
+	{
+		return m_iStatQueuedJobs;
+	}
+};
+
+
+ISphThdPool * sphThreadPoolCreate ( int iThreads, const char * sName )
+{
+	return new CSphThdPool ( iThreads, sName );
+}
+
+int sphCpuThreadsCount ()
+{
+#if USE_WINDOWS
+	SYSTEM_INFO tInfo;
+	GetSystemInfo ( &tInfo );
+	return tInfo.dwNumberOfProcessors;
+#else
+	return sysconf ( _SC_NPROCESSORS_ONLN );
+#endif
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+
+#if USE_WINDOWS
+#pragma warning(push,1)
+#pragma warning(disable:4530)
+#endif
+
+#include <map>
+
+#if USE_WINDOWS
+#pragma warning(pop)
+#endif
+
+class TDigest_c : public TDigest_i
+{
+public:
+	TDigest_c ()
+	{
+		Reset();
+	}
+
+	virtual void Add ( double fValue, int64_t iWeight = 1 )
+	{
+		if ( m_dMap.empty() )
+		{
+			m_dMap.insert ( std::pair<double, int64_t> ( fValue, iWeight ) );
+			m_iCount = iWeight;
+			return;
+		}
+
+		auto tStart = m_dMap.lower_bound(fValue);
+		if ( tStart==m_dMap.end() )
+			tStart = m_dMap.begin();
+		else
+		{
+			while ( tStart!=m_dMap.begin() && tStart->first==fValue )
+				tStart--;
+		}
+
+		double fMinDist = DBL_MAX;
+		auto tLastNeighbor = m_dMap.end();
+		for ( auto i=tStart; i!=m_dMap.end(); ++i )
+		{
+			double fDist = fabs ( i->first - fValue );
+			if ( fDist < fMinDist )
+			{
+				tStart = i;
+				fMinDist = fDist;
+			} else if ( fDist > fMinDist )
+			{
+				// we've passed the nearest nearest neighbor
+				tLastNeighbor = i;
+				break;
+			}
+		}
+
+		auto tClosest = m_dMap.end();
+		int64_t iSum = 0;
+		for ( auto i=m_dMap.begin(); i!=tStart; ++i )
+			iSum += i->second;
+
+		int64_t iN = 0;
+		const double COMPRESSION = 200.0;
+		for ( auto i=tStart; i!=tLastNeighbor; ++i )
+		{
+			double fQuantile = m_iCount==1 ? 0.5 : (iSum + (i->second - 1) / 2.0) / (m_iCount - 1);
+			double fThresh = 4.0 * m_iCount * fQuantile * (1 - fQuantile) / COMPRESSION;
+
+			if ( i->second + iWeight <= fThresh )
+			{
+				iN++;
+				if ( ( double (sphRand()) / UINT_MAX ) < 1.0/iN )
+					tClosest = i;
+			}
+
+			iSum += i->second;
+		}
+
+		if ( tClosest==m_dMap.end() )
+			m_dMap.insert ( std::pair<double, int64_t> ( fValue, iWeight ) );
+		else
+		{
+			double fNewMean = WeightedAvg ( tClosest->first, tClosest->second, fValue, iWeight );
+			int64_t iNewCount = tClosest->second+iWeight;
+			m_dMap.erase(tClosest);
+			m_dMap.insert ( std::pair<double, int64_t> ( fNewMean, iNewCount ) );
+
+		}
+
+		m_iCount += iWeight;
+
+		const DWORD K=20;
+		if ( m_dMap.size() > K * COMPRESSION )
+			Compress();
+	}
+
+
+	virtual double Percentile ( int iPercent ) const
+	{
+		assert ( iPercent>=0 && iPercent<=100 );
+
+		if ( m_dMap.empty() )
+			return 0.0;
+
+		int64_t iTotalCount = 0;
+		double fPercent = double(iPercent) / 100.0;
+		fPercent *= m_iCount;
+
+		auto iMapFirst = m_dMap.begin();
+		auto iMapLast = m_dMap.end();
+		--iMapLast;
+
+		for ( auto i = iMapFirst; i!=m_dMap.end(); ++i )
+		{
+			if ( fPercent < iTotalCount + i->second )
+			{
+				if ( i==iMapFirst || i==iMapLast )
+					return i->first;
+				else
+				{
+					// get mean from previous iterator; get mean from next iterator; calc delta
+					auto iPrev = i;
+					auto iNext = i;
+					iPrev--;
+					iNext++;
+
+					double fDelta = ( iNext->first - iPrev->first ) / 2.0;
+					return i->first + ((fPercent - iTotalCount) / i->second - 0.5) * fDelta;
+				}
+			}
+
+			iTotalCount += i->second;
+		}
+
+		return iMapLast->first;
+	}
+
+private:
+	typedef std::multimap<double, int64_t> BalancedTree_c;
+	BalancedTree_c		m_dMap;
+	int64_t				m_iCount;
+
+	double WeightedAvg ( double fX1, int64_t iW1, double fX2, int64_t iW2 )
+	{
+		return ( fX1*iW1 + fX2*iW2 ) / ( iW1 + iW2 );
+	}
+
+	void Reset()
+	{
+		m_dMap.clear();
+		m_iCount = 0;
+	}
+
+	void Compress()
+	{
+		struct Centroid_t
+		{
+			double	m_fMean;
+			int64_t	m_iCount;
+		};
+
+		CSphTightVector<Centroid_t> dValues;
+		dValues.Reserve ( m_dMap.size() );
+		for ( auto i : m_dMap )
+		{
+			Centroid_t & tCentroid = dValues.Add();
+			tCentroid.m_fMean = i.first;
+			tCentroid.m_iCount = i.second;
+		}
+
+		Reset();
+
+		while ( dValues.GetLength() )
+		{
+			int iValue = sphRand() % dValues.GetLength();
+			Add ( dValues[iValue].m_fMean, dValues[iValue].m_iCount );
+			dValues.RemoveFast(iValue);
+		}
+	}
+};
+
+
+TDigest_i * sphCreateTDigest()
+{
+	return new TDigest_c;
+}
+
 
 //
 // $Id$

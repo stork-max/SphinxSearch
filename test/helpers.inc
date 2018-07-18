@@ -339,13 +339,13 @@ function CheckSearchdLog ( $error_file, &$retval )
 
 	foreach ( $rawlog as $line )
 	{
-		foreach ( array ( "WARNING", "ERROR", "FATAL" ) as $tag )
+		foreach ( array ( "WARNING:", "ERROR:", "FATAL:" ) as $tag )
 		{
-			$t = stristr ( $line, $tag );
+			$t = strstr ( $line, $tag );
 			if ( $t )
 			{
 				$error .= $t;
-				if ( $tag!="WARNING" )
+				if ( $tag!="WARNING:" )
 					$retval = 1;
 			}
 		}
@@ -375,6 +375,9 @@ function StartSearchd ( $config_file, $error_file, $pidfile, &$error, $use_watch
 	$test_mode = '--test';
 	if ( $use_watchdog )
 		$test_mode = '';
+
+	if ( isset ( $g_locals['use_pool'] ) && $g_locals['use_pool'] )
+		$test_mode .= ' --test-thd-pool';
 		
 	$retval = 0;
 	if ( $windows )
@@ -502,20 +505,19 @@ function KillSearchd ( $config, $pidfile, $signal, $unlinkpid=True )
 	
 	if ( file_exists($pidfile) && count(file($pidfile)) )
 	{
-		if ( !$windows )
-		{
-			$fp = fopen($pidfile,"r");
-			$pid = fread ( $fp, filesize ( $pidfile ) );
-			fclose ($fp);
+		$fp = fopen($pidfile,"r");
+		$pid = fread ( $fp, filesize ( $pidfile ) );
+		fclose ($fp);
 
+		if ( $windows )
+			exec ("kill -f -s $signal $pid");
+		else
 			exec ("kill -s $signal $pid");
-			if ( $unlinkpid && file_exists ( $pidfile ) )
-			{
-				usleep ( $action_wait_timeout );
-				unlink ( $pidfile );
-			}
-		} else
-			StopSearchd ($config, $pidfile);
+		if ( $unlinkpid && file_exists ( $pidfile ) )
+		{
+			usleep ( $action_wait_timeout );
+			unlink ( $pidfile );
+		}
 	}
 }
 
@@ -549,7 +551,7 @@ function CompareResultSetFixup ( &$set, $roundoff, $variants_match )
 			if ( @$set["resarray"] )
 			{
 				for ( $i=0; $i<count($set); $i++ )
-					unset ( $set["matches"][$id]["weight"] );
+					unset ( $set["matches"][$i]["weight"] );
 			} else
 			{
 				foreach ( $set["matches"] as $id=>$match )
@@ -569,13 +571,17 @@ function CompareResultSetFixup ( &$set, $roundoff, $variants_match )
 	//foreach ( preg_split ( "/\\W+/", "time warning status fields resarray roundoff words" ) as $key )
 	foreach ( preg_split ( "/\\W+/", "time warning status fields resarray roundoff" ) as $key )
 		unset ( $set[$key] );
-		
+
+	// variants are be used to check mva32/mva64, int/bigint, etc
+	// thus in variants check we fixup the compatible attribute types and only check the data
 	if ( $variants_match && isset ( $set["attrs"] ) )
-	{			
+	{
 		foreach ( $set["attrs"] as $k=>$v )
 		{
 			if ( $v==SPH_ATTR_MULTI64 )
 				$set["attrs"][$k] = SPH_ATTR_MULTI; 
+			if ( $v==SPH_ATTR_BIGINT && $k[0]=="@" )
+				$set["attrs"][$k] = SPH_ATTR_INTEGER;
 		}
 	}
 }
@@ -757,6 +763,129 @@ class APIClient extends SphinxClient
 	}
 }
 
+function FormatJsonRow ( $j )
+{
+	if ( !is_array ( $j ) ||  !count($j) )
+	{
+		return "[]\n";
+	}
+	$str = "[\n";
+
+	$row_sep = "";
+	foreach ( $j as $row )
+	{
+		$str .= "$row_sep\t";
+		$str .= json_encode ( $row, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+		$row_sep = ",\n";
+	}
+	$str .= "]";
+	return $str;
+}
+
+function HttpFormatResultSet ( $result )
+{
+	$str = '';
+	$n = 0;
+	foreach ( $result as $res )
+	{
+		$http_endpoint = '';
+		$http_get = '';
+		$http_post = '';
+		$http_code = '';
+		$rows = array();
+		$attrs = array();
+		$matches = array();
+		$meta = array();
+
+		if ( is_array ( $res ) && array_key_exists ( 'http_endpoint', $res ) )
+			$http_endpoint = $res['http_endpoint'];
+		if ( is_array ( $res ) && array_key_exists ( 'http_get', $res ) )
+			$http_get = $res['http_get'];
+		if ( is_array ( $res ) && array_key_exists ( 'http_post', $res ) )
+			$http_post = $res['http_post'];
+		if ( is_array ( $res ) && array_key_exists ( 'http_code', $res ) )	
+			$http_code = $res['http_code'];
+		if ( is_array ( $res ) && array_key_exists ( 'rows', $res ) )	
+			$rows = json_decode ( $res['rows'], 1 );
+		
+		if ( is_array ( $rows ) && array_key_exists ( 'attrs', $rows ) )
+			$attrs = $rows['attrs'];
+		if ( is_array ( $rows ) && array_key_exists ( 'matches', $rows ) )	
+			$matches = $rows['matches'];
+		if ( is_array ( $rows ) && array_key_exists ( 'meta', $rows ) )
+			$meta = $rows['meta'];
+		
+		$str .= "http-$n> /$http_endpoint\n";
+		$str .= "\tStatus: $http_code\n";
+		if ( $http_get )
+			$str .= "\tGET $http_get\n";
+		if ( $http_post )
+			$str .= "\tPOST " . json_encode ( $http_post, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) . "\n";
+		$str .= "\n";
+		
+		$str .= "\tschema:" . json_encode ( $attrs, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+		$str .= "\n";
+		$str .= "\tmatches:" . FormatJsonRow ( $matches );
+		$str .= "\n";
+		$str .= "\tmeta:" . json_encode ( $meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+		$str .= "\n";
+		
+		// data tail
+		unset ( $rows['attrs'] );
+		unset ( $rows['matches'] );
+		unset ( $rows['meta'] );
+		if ( count ( $rows ) )
+			$str .= json_encode ( $rows, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+			
+		$str .= "\n";
+		$n++;
+	}
+	return $str;
+}
+
+function Dict2String ( $dict )
+{
+	if ( is_null ( $dict ) )
+		return NULL;
+		
+	$str = '';
+	$delimiter = '';
+	foreach ( $dict as $name=>$val )
+	{
+		$str .= $delimiter . $name . '=' . $val;
+		$delimiter = '&';
+	}
+	return $str;
+}
+
+function HttpQuery ( $http_endpoint, $http_get, $http_post )
+{
+	global $sd_http_port;
+	$curl_desc = array ( CURLOPT_RETURNTRANSFER => 1, CURLOPT_CONNECTTIMEOUT=>1, CURLOPT_URL => "127.0.0.1:$sd_http_port/" . $http_endpoint );
+	$http_get = Dict2String ( $http_get );
+	$http_post = Dict2String ( $http_post );
+
+	if ( $http_get )
+		$curl_desc[CURLOPT_URL] = $curl_desc[CURLOPT_URL] . '?' . $http_get;
+
+	if ( $http_post )
+	{
+		$curl_desc[CURLOPT_POST] = 1;
+		$curl_desc[CURLOPT_POSTFIELDS] = $http_post;
+	}
+	
+	$con = curl_init();
+	
+	curl_setopt_array ( $con, $curl_desc );
+	$rows = curl_exec ( $con );
+	$rows = preg_replace('/"time":\d+(\.\d+)*,/', '"time":0.000,', $rows);
+	$http_code = curl_getinfo ( $con, CURLINFO_HTTP_CODE );
+	
+	curl_close($con);
+	
+	return array ( 'http_endpoint'=>$http_endpoint, 'http_get'=>$http_get, 'http_post'=>$http_post, 'rows'=>$rows, 'http_code'=>$http_code );
+}
+
 class SphinxConfig
 {
 	private $_name;
@@ -775,6 +904,7 @@ class SphinxConfig
 	private	$_sd_address;
 	private	$_sd_port;
 	private $_sd_sphinxql_port;
+	private	$_sd_http_port;
 	private	$_sd_pid_file;
 	private $_num_agents;
 	private $_subtest;
@@ -795,7 +925,7 @@ class SphinxConfig
 
 	function SphinxConfig ()
 	{
-		global $sd_address, $sd_port, $sd_sphinxql_port, $sd_pid_file;
+		global $sd_address, $sd_port, $sd_sphinxql_port, $sd_pid_file, $sd_http_port;
 
 		$this->_counters 		= array ();
 		$this->_dynamic_entries = array ();
@@ -815,6 +945,7 @@ class SphinxConfig
 		$this->_sd_address		= $sd_address;
 		$this->_sd_port			= $sd_port;
 		$this->_sd_sphinxql_port	= $sd_sphinxql_port;
+		$this->_sd_http_port	= $sd_http_port;
 		$this->_sd_pid_file		= $sd_pid_file;
 		$this->_custom_test		= "";
 		$this->_compat098		= false;
@@ -1114,6 +1245,7 @@ class SphinxConfig
 				$res["filter_value"] = $q->getAttribute("filter_value" );
 				$res["filter_range"] = $this->ParseRange ( $q->getAttribute("filter_range" ) );
 				$res["filter_str"] = $q->getAttribute("filter_str");
+				$res["filter_exclude"] = $q->getAttribute("filter_exclude");
 
 				// parse sort mode and get clause
 				$sortmode = 0;
@@ -1576,14 +1708,17 @@ class SphinxConfig
 						if ( @$qinfo["filter"] )
 						{
 							$name = $qinfo["filter"];
+							$exclude = false;
+							if ( isset ( $qinfo["filter_exclude"] ) && $qinfo["filter_exclude"]=="1" )
+								$exclude = true;
 							if ( @$qinfo["filter_value"] )
-								$cl->SetFilter ( $name, array ( $qinfo["filter_value"] ) );
+								$cl->SetFilter ( $name, array ( $qinfo["filter_value"] ), $exclude );
 							elseif ( @$qinfo["filter_range"] )
 							{
 								$range = $qinfo["filter_range"];
-								$cl->SetFilterRange ( $name, $range['min'], $range['max'] );
+								$cl->SetFilterRange ( $name, $range['min'], $range['max'], $exclude );
 							} elseif ( @$qinfo["filter_str"] )
-								$cl->SetFilterString ( $name, $qinfo["filter_str"] );
+								$cl->SetFilterString ( $name, $qinfo["filter_str"], $exclude );
 						}
 						
 						$results = $cl->Query ( $query, $my_index, "run".(1+$this->SubtestNo()) );
@@ -1832,8 +1967,8 @@ class SphinxConfig
 			for ( $k=0; $k<$nqueries; $k++ )
 			if ( !$this->CompareResultSets ( $this->_results_model[0][$k], $this->_results_model[$i][$k] ) )
 			{
-				$first = $this->FormatResultSet ( $k+1, $this->_results_model[0][$k] );
-				$current = $this->FormatResultSet ( $k+1, $this->_results_model[$i][$k] );
+				$first = $this->FormatResultSet ( $k+1, $this->_results_model[0][$k], array("format_attrs"=>1) );
+				$current = $this->FormatResultSet ( $k+1, $this->_results_model[$i][$k], array("format_attrs"=>1) );
 
 				file_put_contents ( "first", $first );
 				file_put_contents ( "current", $current );
@@ -1875,6 +2010,9 @@ class SphinxConfig
 	function FormatResultSet ( $nquery, $result, $opts=array() )
 	{
 		global $sd_skip_indexer;
+		if ( $this->Requires('http') )
+			return HttpFormatResultSet ( $result );
+
 		if ( !$this->IsQueryTest () || !is_array($result) )
 			return var_export ( $result, true )."\n";
 
@@ -2062,7 +2200,7 @@ class SphinxConfig
 	/// write all the result sets
 	function WriteResults ( $fp )
 	{
-		if ( $this->IsQueryTest () )
+		if ( $this->IsQueryTest () || $this->Requires('http') )
 		{
 			$nquery = 1;
 			foreach ( $this->_results as $result )
@@ -2173,7 +2311,7 @@ class SphinxConfig
 			$parent = 4;
 			$content = 5;
 			$epilog = 6;
-			$pattern = "/.*?(source\s+(\S*?)(\s*\:\s*(\S*?))?\s*\{(.*?)\})(.*?)/s";
+			$pattern = "/.*?(source\s+(\S*?)(\s*\:\s*(\S*?))?\s*\{(.*?)\n\s*\})(.*?)/s";
 			preg_match_all ( $pattern, $config, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE );
 			$schemas = array();
 			$shift = 0;
@@ -2182,14 +2320,29 @@ class SphinxConfig
 			// parse sources
 			foreach ( $matches as $match )
 			{
-				$lines = explode("\n", $match[$content][0]);
+				// split to lines, taking into account multiline variables
+				$lines = explode("\n", str_replace("\\\n", "", $match[$content][0]));
+
 				$insert_schema = array();
 				$insert_types = array();
-				if ( $match[$parent][0] != "" )
-					$insert_types = $schemas[$match[$parent][0]]['types'];
-
+				$insert_values = array();
+				$schema_bits = array();
+				$sql_attr_multi = array();
 				$sql_query_pre = array();
 				$sql_query = "";
+				$sql_query_range = "";
+				$sql_query_range_step = 1024;
+				$sql_file_fields = array();
+
+				if ( $match[$parent][0] != "" )
+				{
+					$insert_types = $schemas[$match[$parent][0]]['types'];
+					$insert_schema = $schemas[$match[$parent][0]]['orders'];
+					$sql_attr_multi = $schemas[$match[$parent][0]]['multi'];
+					$sql_query_pre = $schemas[$match[$parent][0]]['pre'];
+					$sql_query = $schemas[$match[$parent][0]]['query'];
+					$sql_query_range = $schemas[$match[$parent][0]]['range'];
+				}
 
 				foreach ( $lines as $line )
 				{
@@ -2203,6 +2356,7 @@ class SphinxConfig
 						continue;
 					$key = strtolower ( trim ( substr($line,0,$eq), " \t" ) );
 					$value = trim ( substr($line,$eq+1), " \t" );
+					$lcvalue = strtolower($value);
 
 					// handle known keys
 					switch ( $key )
@@ -2215,77 +2369,192 @@ class SphinxConfig
 							}
 							break;
 
-						case "sql_attr_uint":		$insert_types[$value] = "rt_attr_uint"; break;
-						case "sql_attr_bigint":		$insert_types[$value] = "rt_attr_bigint"; break;
-						case "sql_attr_float":		$insert_types[$value] = "rt_attr_float"; break;
-						case "sql_attr_timestamp":	$insert_types[$value] = "rt_attr_timestamp"; break;
-						//case "sql_attr_multi":	$insert_types[$value] = "rt_attr_multi"; break;
-						case "sql_attr_bool":		$insert_types[$value] = "rt_attr_bool"; break;
-						case "sql_attr_json":		$insert_types[$value] = "rt_attr_json"; break;
-						case "sql_attr_string":		$insert_types[$value] = "rt_attr_string"; break;
-						case "sql_field_string":	$insert_types[$value] = "FIELD"; break;
-
+						case "sql_attr_uint":
+						case "sql_attr_bigint":
+							if (strstr($lcvalue, ":")===false)
+							{
+								$attr = $lcvalue;
+								$bits = "";
+							} else
+							{
+								$attr = strstr($lcvalue, ":", true); // true == extract the part before needle, ie. attr name
+								$bits = strstr($lcvalue, ":");
+							}
+							$insert_types[$attr] = "rt_" . substr($key, 4);
+							$schema_bits[$attr] = $bits;
+							break;
+						case "sql_attr_float":		$insert_types[$lcvalue] = "rt_attr_float"; break;
+						case "sql_attr_timestamp":	$insert_types[$lcvalue] = "rt_attr_timestamp"; break;
+						case "sql_attr_bool":		$insert_types[$lcvalue] = "rt_attr_bool"; break;
+						case "sql_attr_json":		$insert_types[$lcvalue] = "rt_attr_json"; break;
+						case "sql_attr_string":		$insert_types[$lcvalue] = "rt_attr_string"; break;
+						case "sql_field_string":	$insert_types[$lcvalue] = "FIELD"; break;
+						case "sql_attr_multi":		$sql_attr_multi[] = $value; break;
 						case "sql_query_pre":		$sql_query_pre[] = $value; break;
 						case "sql_query":			$sql_query = $value; break;
+						case "sql_query_range":		$sql_query_range = $value; break;
+						case "sql_query_range_step":$sql_query_range_step = $value; break;
+						case "sql_file_field":		$sql_file_fields[] = $value; break;
 					}
 				}
 
-				// query is kinda mandatory
-				if ( !$sql_query )
+				// sql query is not mandatory (e.g. in parent sections)
+				if ( $sql_query )
 				{
-					$msg = "missing sql_query";
-					return false;
+
+					// now let's connect to MySQL, run the query, and fetch the values
+					$conn = ConnectDB();
+					if (mysqli_connect_error()) {
+						$msg = "can't connect or select the database";
+						return false;
+					}
+
+					// gotta run pre-queries first!
+					foreach ( $sql_query_pre as $q )
+					{
+						if ( mysqli_wr ( $q, $conn ) )
+							continue;
+
+						$msg = sprintf ( "sql_query_pre failed (query=%s, error=%s)", $q, $conn->error );
+						$conn->close ();
+						return false;
+					}
+
+					// copy original query
+					$sql = $sql_query;
+
+					// apply query range
+					if ( $sql_query_range )
+					{
+						$res = mysqli_wr ( $sql_query_range, $conn );
+						if ( !$res )
+						{
+							$msg = sprintf ( "sql_query failed (query=%s, error=%s)", $sql_query, $conn->error );
+							$conn->close();
+							return false;
+						}
+
+						$range_values = array();
+						while ( $row = $res->fetch_row() )
+							$range_values[] = array_values ( $row );
+
+						if ( count($range_values)>=1 )
+						{
+							$sql = str_replace ( '$start', $range_values[0][0], $sql );
+							$sql = str_replace ( '$end', $range_values[0][1], $sql );
+						}
+					}
+
+					// run main query
+					$res = mysqli_wr ( $sql_query, $conn );
+					if ( !$res )
+					{
+						$msg = sprintf ( "sql_query failed (query=%s, error=%s)", $sql_query, $conn->error );
+						$msg = "sql_query can't fetch test data: " . $conn->error;
+						$conn->close ();
+						return false;
+					}
+
+					// fetch fields
+					$insert_schema = array ( "id" => 0 );
+					for ( $i=1; $i < $conn->field_count; $i++ )
+						$insert_schema [ $res->fetch_field_direct ( $i )->name ] = $i;
+
+					// fetch data
+					while ( $row = $res->fetch_row() )
+						$insert_values[] = array_values ( $row );
+
+					// cleanup
+					$res->close();
+
+					// parse mva statements
+					foreach ( $sql_attr_multi as $q )
+					{
+						$stmt = preg_split ( "/\s*;\s*/", $q, 2 );
+						$sql_query = count($stmt)>1 ? $stmt[1] : "";
+
+						if ( !preg_match ( "/^\s*([^\s]+)\s+([^\s]+)\s+from\s+([^\s]+)/", $stmt[0], $regs) )
+						{
+							$msg = sprintf ( "invalid mva statement %s\n", $value );
+							return false;
+						}
+
+						list ( $dummy, $attr_type, $attr_name, $source_type ) = $regs;
+						$attr_name = strtolower ( $attr_name );
+						$multi_type = ( $attr_type=="uint" ? "rt_attr_multi" : ( $attr_type=="bigint" ? "rt_attr_multi_64" : "rt_attr_timestamp" ) );
+						$insert_types[$attr_name] = $multi_type;
+
+						if ( $source_type=="query" )
+						{
+							// query mva_pairs
+							$res = mysqli_wr ( $sql_query, $conn );
+							if ( $res == false )
+							{
+								$msg = sprintf ( "sql_query failed (query=%s, error=%s)", $sql_query, $conn->error );
+								$conn->close();
+								return false;
+							}
+
+							// fetch mva pairs (id, value), group by id
+							$mva =  array();
+							while ( $row = $res->fetch_row() )
+							{
+								list ( $id, $value ) = array_values ( $row );
+								$mva[$id][] = $value;
+							}
+
+							// cleanup mysqli
+							$res->close();
+
+							// add mva attribute to the schema
+							$attr_index = count ( $insert_schema );
+							$insert_schema[$attr_name] = $attr_index;
+
+							// insert mva values separated with commas
+							for ( $i=0; $i<count($insert_values); $i++ )
+							{
+								$id = $insert_values[$i][0];
+								$insert_values[$i][] = array_key_exists ( $id, $mva ) ? implode ( ',', $mva[$id] ) : "";
+							}
+						}
+						else if ( $source_type=="field" )
+						{
+							// get field offset
+							$attr_index = $insert_schema[$attr_name];
+
+							// insert mva values
+							for ( $i=0; $i<count($insert_values); $i++ )
+							{
+								$mva = preg_replace ( "/[a-z\(\)]/i", " ", $insert_values[$i][$attr_index] );
+								$mva = preg_split ( "/[\s,]+/", $mva, -1, PREG_SPLIT_NO_EMPTY );
+								$insert_values[$i][$attr_index] = implode ( ',', $mva );
+							}
+						}
+					}
+
+					// cleanup
+					$conn->close();
+
+					// load files
+					foreach ($sql_file_fields as $ff)
+					{
+						$index = $insert_schema[$ff]; // FIXME? what if it does not exist?
+						for ($i=0; $i<count($insert_values); $i++)
+							$insert_values[$i][$index] = @file_get_contents($insert_values[$i][$index]); // FIXME? handle errors
+					}
+
+
 				}
-
-				// now let's connect to MySQL, run the query, and fetch the values
-				$conn = ConnectDB();
-				if (mysqli_connect_error()) {
-					$msg = "can't connect or select the database";
-					return false;
-				}
-
-				// gotta run pre-queries first!
-				foreach ( $sql_query_pre as $q )
-				{
-					if ( mysqli_wr ( $q, $conn ) )
-						continue;
-
-					$msg = sprintf ( "sql_query_pre failed (query=%s, error=%s)", $q, $conn->error );
-					$conn->close ();
-					return false;
-				}
-
-				// run main query
-				$res = mysqli_wr ( $sql_query, $conn );
-				if ( !$res )
-				{
-					$msg = sprintf ( "sql_query failed (query=%s, error=%s)", $sql_query, $conn->error );
-					$msg = "sql_query can't fetch test data: " . $conn->error;
-					$conn->close ();
-					return false;
-				}
-
-				// fetch fields
-				$insert_schema = array ( "id" => 0 );
-				for ( $i=1; $i < $conn->field_count; $i++ )
-					$insert_schema [ $res->fetch_field_direct ( $i )->name ] = $i;
-
-				// fetch data
-				$insert_values = array();
-				while ( $row = $res->fetch_row() )
-					$insert_values[] = array_values ( $row );
-
-				// cleanup
-				$res->close();
-				$conn->close();
 
 				// store
 				$schema = array();
 				$schema['types'] = $insert_types;
-				if ( $match[$parent][0] != "" )
-					$schema['orders'] = $schemas[$match[$parent][0]]['orders'];
-				else
-					$schema['orders'] = $insert_schema;
+				$schema['bits'] = $schema_bits;
+				$schema['orders'] = $insert_schema;
+				$schema['multi'] = $sql_attr_multi;
+				$schema['pre'] = $sql_query_pre;
+				$schema['query'] = $sql_query;
+				$schema['range'] = $sql_query_range;
 				$schema['values'] = $insert_values;
 				$schema['sqlport'] = $this->_sd_sphinxql_port;
 
@@ -2300,11 +2569,12 @@ class SphinxConfig
 			$parent = 4;
 			$content = 5;
 			$epilog = 6;
-			$pattern = "/.*?(index\s+(\S*?)(\s*\:\s*(\S*?))?\s*\{(.*?)\})(.*?)/s";
+			$pattern = "/.*?(index\s+(\S*?)(\s*\:\s*(\S*?))?\s*\{(.*?)\n\s*\})(.*?)/s";
 			preg_match_all ( $pattern, $config, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE );
 			$shift = 0;
 			// parse indexes
 			$indexes = array();
+			$sources = array();
 			foreach ( $matches as $match )
 			{
 				$idx = "index ".$match[$idxname][0];
@@ -2312,20 +2582,23 @@ class SphinxConfig
 					$idx .= " : ".$match[$parent][0];
 				$idx .= "\n{\n\tdict = keywords\n";
 
-				$lines = explode("\n", $match[$content][0]);
+				//source could be inherited
+				if ( !strpos ( $match[$content][0],"source" ) )
+					if ( array_key_exists ( $match[$parent][0], $sources ) )
+						$match[$content][0] .= "\nsource = ".$sources[$match[$parent][0]];
+
+				$lines = explode("\n", str_replace("\\\n", "", $match[$content][0]));
 				$justcopy = false;
 				$rtcopy = false;
 				$idxbody = "";
 				foreach ($lines as $line)
 				{
-					// skip comment lines (if any)
-					if ( preg_match ( "/\s*#/" , $line ) > 0 )
-						continue;
 					$eq = strpos ( $line,"=" );
 					if ($eq == 0)
 						continue;
 					$key = strtolower ( trim ( substr($line,0,$eq), " \t" ) );
 					$value = trim ( substr($line,$eq+1), " \t" );
+
 					switch ( $key )
 					{
 						case "type":
@@ -2349,10 +2622,16 @@ class SphinxConfig
 												$idxbody .= "\trt_field\t= $key\n";
 												$idxbody .= "\trt_attr_string\t= $key\n";
 											} else
-												$idxbody .= "\t".$schemas[$value]['types'][$key]."\t= $key\n";
+											{
+												$idxbody .= "\t".$schemas[$value]['types'][$key]."\t= $key";
+												if (isset($schemas[$value]['bits'][$key]))
+													$idxbody .= $schemas[$value]['bits'][$key];
+												$idxbody .= "\n";
+											}
 										} else
 											$idxbody .= "\trt_field\t= $key\n";
 									}
+								$sources[$match[$idxname][0]] = $value;
 								break;
 							}
 						case "path": $this->EraseIndexFiles($value);
@@ -2455,17 +2734,26 @@ class SphinxConfig
 			$prefix = "INSERT INTO $name ($cols) VALUES ";
 
 			$accum = "";
+
+			// mva shouldn't be quoted, e.g. "insert into rt (id,gid,mva) values ('1','2',(1,2))"
+			$is_mva = array();
+			foreach ( array_keys($data["orders"]) as $key )
+				$is_mva[] = array_key_exists ( $key, $data["types"] ) && ( $data["types"][$key]=="rt_attr_multi" || $data["types"][$key]=="rt_attr_multi_64" );
+
 			foreach ($data['values'] as $row)
 			{
 				$query = "";
+				$i = 0;
 				foreach ( $row as $column )
 				{
 					if ( $query!="" )
 						$query .=",";
-					$query .="'".$cn->escape_string($column)."'";
+					$s = $cn->real_escape_string($column);
+					$query .= ( array_key_exists ( $i, $is_mva ) && $is_mva[$i] ) ? '('.$s.')' : "'".$s."'";
+					$i++;
 				}
 				
-				if ( ( strlen ($accum) + strlen ($query) ) > 1024000 ) ///<checkit!
+				if ( ( strlen ($accum) + strlen ($query) ) > 8192000 ) ///<checkit!
 				{
 					$result = mysqli_wr ( $prefix.$accum, $cn );
 					if ( $result === false )
@@ -2483,7 +2771,7 @@ class SphinxConfig
 			// final chunk;
 			if ( $accum !="" )
 			{
-				$result = @$cn->query ( $prefix.$accum );
+				$result = mysqli_wr ( $prefix.$accum, $cn );
 				if ( $result === false )
 				{
 					$error = $cn->error;
@@ -2531,6 +2819,9 @@ class SphinxConfig
 	function WriteSearchdSettings ( $fp )
 	{
 		global $sd_log, $sd_query_log, $sd_read_timeout, $sd_max_children, $sd_pid_file;
+		$workers = "threads";
+		if ( $this->Requires("thread_pool") || $this->Requires("http") )
+			$workers = "thread_pool";
 
 		if ( $this->_compat098 )
 		{
@@ -2541,15 +2832,15 @@ class SphinxConfig
 		{
 			fwrite ( $fp, "\tlisten		= {$this->_sd_address}:{$this->_sd_port}\n" );
 			fwrite ( $fp, "\tlisten		= {$this->_sd_address}:{$this->_sd_sphinxql_port}:mysql41\n" );
+			if ( $this->Requires("http") )
+				fwrite ( $fp, "\tlisten		= {$this->_sd_address}:{$this->_sd_http_port}:http\n" );
 		}
 		fwrite ( $fp, "\tlog			= $sd_log\n" );
 		fwrite ( $fp, "\tquery_log		= $sd_query_log\n" );
 		fwrite ( $fp, "\tread_timeout	= $sd_read_timeout\n" );
 		fwrite ( $fp, "\tmax_children	= $sd_max_children\n" );
 		fwrite ( $fp, "\tpid_file		= ".$this->_sd_pid_file."\n" );
-		if ( $this->IsRt() )
-			fwrite ( $fp, "\tworkers		= threads\n" );
-			
+		fwrite ( $fp, "\tworkers		= $workers\n" );
 	}
 
 	function WriteSqlSettings ( $fp, $attributes )

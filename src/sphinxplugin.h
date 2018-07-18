@@ -48,12 +48,13 @@ typedef void			(*TokenFilterDeinit_fn)			( void * userdata );
 typedef int				(*QueryTokenFilterInit_fn)		( void ** userdata, int max_len, const char * options, char * error );
 typedef void			(*QueryTokenFilterPreMorph_fn)	( void * userdata, char * token, int * stopword );
 typedef int				(*QueryTokenFilterPostMorph_fn)	( void * userdata, char * token, int * stopword );
+typedef char *			(*QueryTokenFilterPushToken_fn)	( void * userdata, char * token, int * delta, const char * raw_token_start, int raw_token_len );
 typedef void			(*QueryTokenFilterDeinit_fn)	( void * userdata );
 
 //////////////////////////////////////////////////////////////////////////
 
 /// forward refs
-struct PluginLib_t;
+class PluginLib_c;
 class CSphWriter;
 
 /// plugin types
@@ -69,23 +70,20 @@ enum PluginType_e
 };
 
 /// common plugin descriptor part
-class PluginDesc_c
+class PluginDesc_c : public ISphRefcountedMT
 {
-public:
-	PluginLib_t *		m_pLib;			///< library descriptor (pointer to library hash value)
-	const CSphString *	m_pLibName;		///< library name (pointer to library hash key; filename only, no path!)
-	mutable int			m_iUserCount;	///< number of active users currently working this function
-	bool				m_bToDrop;		///< scheduled for DROP; do not use
+protected:
+	PluginLib_c *		m_pLib;			///< library descriptor (pointer to library hash value)
 
-	PluginDesc_c()
-		: m_pLib ( NULL )
-		, m_pLibName ( NULL )
-		, m_iUserCount ( 0 )
-		, m_bToDrop ( false )
-	{}
-	virtual				~PluginDesc_c() {}
-	virtual void		Use() const;
-	virtual void		Release() const;
+public:
+	explicit			PluginDesc_c ( PluginLib_c * pLib );
+	virtual ESphAttr	GetUdfRetType() const { return SPH_ATTR_NONE; }
+
+	const CSphString &	GetLibName() const;
+	PluginLib_c *		GetLib() const { return m_pLib; }
+
+protected:
+	virtual				~PluginDesc_c();
 };
 
 /// registered user-defined function descriptor
@@ -97,9 +95,12 @@ public:
 	UdfDeinit_fn		m_fnDeinit;		///< per-query deinit function, optional
 	void *				m_fnFunc;		///< per-row worker function, mandatory
 
-	PluginUDF_c ( ESphAttr eRetType )
-		: m_eRetType ( eRetType )
+	explicit PluginUDF_c ( PluginLib_c * pLib, ESphAttr eRetType )
+		: PluginDesc_c ( pLib )
+		, m_eRetType ( eRetType )
 	{}
+
+	virtual ESphAttr	GetUdfRetType() const { return m_eRetType; }
 };
 
 /// registered user-defined ranker descriptor
@@ -110,6 +111,8 @@ public:
 	RankerUpdate_fn		m_fnUpdate;		///< per-hit update function, optional
 	RankerFinalize_fn	m_fnFinalize;	///< per-document finalize function, mandatory
 	RankerDeinit_fn		m_fnDeinit;		///< deinit function (called once when ranker is destroyed), optional
+
+	explicit			PluginRanker_c ( PluginLib_c * pLib ) : PluginDesc_c ( pLib ) {}
 };
 
 /// registered user-defined token filter descriptor
@@ -123,6 +126,8 @@ public:
 	TokenFilterGetExtraToken_fn	m_fnGetExtraToken;
 	TokenFilterEndField_fn		m_fnEndField;
 	TokenFilterDeinit_fn		m_fnDeinit;
+
+	explicit					PluginTokenFilter_c ( PluginLib_c * pLib ) : PluginDesc_c ( pLib ) {}
 };
 
 /// registered user-defined token filter descriptor
@@ -132,7 +137,10 @@ public:
 	QueryTokenFilterInit_fn			m_fnInit;
 	QueryTokenFilterPreMorph_fn		m_fnPreMorph;
 	QueryTokenFilterPostMorph_fn	m_fnPostMorph;
+	QueryTokenFilterPushToken_fn	m_fnPushToken;
 	QueryTokenFilterDeinit_fn		m_fnDeinit;
+
+	explicit						PluginQueryTokenFilter_c ( PluginLib_c * pLib ) : PluginDesc_c ( pLib ) {}
 };
 
 /// human readable plugin description (basically for SHOW PLUGINS)
@@ -155,14 +163,8 @@ extern const char * g_dPluginTypes[PLUGIN_TOTAL];
 /// initialize plugin manager
 void sphPluginInit ( const char * sDir );
 
-/// enable/disable dynamic CREATE/DROP
-void sphPluginLock ( bool bLocked );
-
 /// save SphinxQL state (ie. all active functions)
 void sphPluginSaveState ( CSphWriter & tWriter );
-
-/// call reinit function in every plugin library
-void sphPluginReinit();
 
 /// convert plugin type string to enum
 PluginType_e sphPluginGetType ( const CSphString & s );
@@ -188,6 +190,9 @@ PluginDesc_c * sphPluginAcquire ( const char * sLib, PluginType_e eType, const c
 
 /// drop plugin by name
 bool sphPluginDrop ( PluginType_e eType, const char * sName, CSphString & sError );
+
+/// reload all plugins from a given library
+bool sphPluginReload ( const char * sName, CSphString & sError );
 
 /// list all plugins (basically for SHOW PLUGINS)
 void sphPluginList ( CSphVector<PluginInfo_t> & dResult );

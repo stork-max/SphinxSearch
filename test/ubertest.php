@@ -11,6 +11,15 @@ $g_pick_query = -1;
 
 require_once ( "settings.inc" );
 
+if (!defined("JSON_UNESCAPED_SLASHES") || !defined("JSON_UNESCAPED_UNICODE"))
+	die("ubertest needs JSON_UNESCAPED_xxx support; upgrade your PHP to 5.4+");
+
+if (!function_exists("curl_init"))
+	die("ERROR: missing required curl_init(); add php_curl.so (.dll on Windows) to your php.ini!");
+
+if ( !$windows && !is_executable("/usr/bin/python"))
+		die("ubertest needs python support; install python");
+
 //////////////////////
 // parse command line
 //////////////////////
@@ -81,6 +90,7 @@ for ( $i=0; $i<count($args); $i++ )
 	else if ( $arg=="-i" || $arg=="--indexer" )		$locals['indexer'] = $args[++$i];
 	else if ( $arg=="-s" || $arg=="--searchd" )		$locals['searchd'] = $args[++$i];
 	else if ( $arg=="--rt" )						$locals['rt_mode'] = true;
+	else if ( $arg=="--test-thd-pool" )				$locals['use_pool'] = true;
 	else if ( $arg=="--strict" )					$g_strict = true;
 	else if ( $arg=="--strict-verbose" )			{ $g_strict = true; $g_strictverbose = true; }
 	else if ( $arg=="--ignore-weights" )			$g_ignore_weights = true;

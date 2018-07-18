@@ -26,6 +26,8 @@
 %token	TOK_ADD
 %token	TOK_AGENT
 %token	TOK_ALTER
+%token	TOK_ALL
+%token	TOK_ANY
 %token	TOK_AS
 %token	TOK_ASC
 %token	TOK_ATTACH
@@ -65,9 +67,11 @@
 %token	TOK_GROUPBY
 %token	TOK_GROUP_CONCAT
 %token	TOK_HAVING
+%token	TOK_HOSTNAMES
 %token	TOK_ID
 %token	TOK_IN
 %token	TOK_INDEX
+%token	TOK_INDEXOF
 %token	TOK_INSERT
 %token	TOK_INT
 %token	TOK_INTEGER
@@ -98,6 +102,7 @@
 %token	TOK_RAMCHUNK
 %token	TOK_READ
 %token	TOK_RECONFIGURE
+%token	TOK_RELOAD
 %token	TOK_REPEATABLE
 %token	TOK_REPLACE
 %token	TOK_REMAP
@@ -159,6 +164,15 @@ static void AddInsval ( SqlParser_c * pParser, CSphVector<SqlInsert_t> & dVec, c
 	tIns.m_pVals = tNode.m_pValues;
 }
 
+static CSphFilterSettings * AddMvaRange ( SqlParser_c * pParser, const SqlNode_t & tNode, int64_t iMin, int64_t iMax )
+{
+	CSphFilterSettings * f = pParser->AddFilter ( tNode, SPH_FILTER_RANGE );
+	f->m_eMvaFunc = ( tNode.m_iType==TOK_ALL ) ? SPH_MVAFUNC_ALL : SPH_MVAFUNC_ANY;
+	f->m_iMinValue = iMin;
+	f->m_iMaxValue = iMax;
+	return f;
+}
+
 #define TRACK_BOUNDS(_res,_left,_right) \
 	_res = _left; \
 	if ( _res.m_iStart>0 && pParser->m_pBuf[_res.m_iStart-1]=='`' ) \
@@ -203,6 +217,9 @@ statement:
 	| alter
 	| create_plugin
 	| drop_plugin
+	| reload_plugins
+	| reload_index
+	| flush_hostnames
 	;
 
 //////////////////////////////////////////////////////////////////////////
@@ -218,13 +235,13 @@ statement:
 
 ident_set:
 	TOK_IDENT
-	| TOK_ADD | TOK_AGENT | TOK_ALTER | TOK_ASC | TOK_ATTACH | TOK_ATTRIBUTES
+	| TOK_ADD | TOK_AGENT | TOK_ALL | TOK_ALTER | TOK_ANY | TOK_ASC | TOK_ATTACH | TOK_ATTRIBUTES
 	| TOK_AVG | TOK_BEGIN | TOK_BETWEEN | TOK_BIGINT | TOK_BOOL| TOK_CALL
 	| TOK_CHARACTER | TOK_CHUNK | TOK_COLLATION | TOK_COLUMN | TOK_COMMIT
 	| TOK_COMMITTED | TOK_COUNT | TOK_CREATE | TOK_DATABASES | TOK_DELETE
 	| TOK_DESC | TOK_DESCRIBE  | TOK_DISTINCT  | TOK_DOUBLE | TOK_DROP
 	| TOK_FLOAT | TOK_FLUSH | TOK_FOR| TOK_FUNCTION | TOK_GLOBAL | TOK_GROUP
-	| TOK_GROUP_CONCAT | TOK_GROUPBY | TOK_HAVING  | TOK_INDEX | TOK_INSERT
+	| TOK_GROUP_CONCAT | TOK_GROUPBY | TOK_HAVING | TOK_HOSTNAMES | TOK_INDEX | TOK_INDEXOF | TOK_INSERT
 	| TOK_INT | TOK_INTEGER | TOK_INTO | TOK_ISOLATION | TOK_JSON | TOK_LEVEL
 	| TOK_LIKE | TOK_MATCH | TOK_MAX | TOK_META | TOK_MIN | TOK_MULTI
 	| TOK_MULTI64 | TOK_OPTIMIZE | TOK_OPTION | TOK_PLAN | TOK_PLUGIN
@@ -459,7 +476,12 @@ filter_item:
 		}
 	| expr_ident TOK_BETWEEN const_int TOK_AND const_int
 		{
-			if ( !pParser->AddIntRangeFilter ( $1, $3.m_iValue, $5.m_iValue ) )
+			if ( !pParser->AddIntRangeFilter ( $1, $3.m_iValue, $5.m_iValue, false ) )
+				YYERROR;
+		}
+	| expr_ident TOK_NOT TOK_BETWEEN const_int TOK_AND const_int
+		{
+			if ( !pParser->AddIntRangeFilter ( $1, $3.m_iValue, $5.m_iValue, true ) )
 				YYERROR;
 		}
 	| expr_ident '>' const_int
@@ -547,6 +569,70 @@ filter_item:
 			if ( !pParser->AddNullFilter ( $1, false ) )
 				YYERROR;
 		}
+
+	// filters on ANY(mva) or ALL(mva)
+	| mva_aggr '=' const_int
+		{
+			CSphFilterSettings * f = pParser->AddFilter ( $1, SPH_FILTER_VALUES );
+			f->m_eMvaFunc = ( $1.m_iType==TOK_ALL ) ? SPH_MVAFUNC_ALL : SPH_MVAFUNC_ANY;
+			f->m_dValues.Add ( $3.m_iValue );
+		}
+	| mva_aggr TOK_NE const_int
+		{
+			// tricky bit
+			// any(tags!=val) is not equivalent to not(any(tags==val))
+			// any(tags!=val) is instead equivalent to not(all(tags)==val)
+			// thus, along with setting the exclude flag on, we also need to invert the function
+			CSphFilterSettings * f = pParser->AddFilter ( $1, SPH_FILTER_VALUES );
+			f->m_eMvaFunc = ( $1.m_iType==TOK_ALL ) ? SPH_MVAFUNC_ANY : SPH_MVAFUNC_ALL;
+			f->m_bExclude = true;
+			f->m_dValues.Add ( $3.m_iValue );
+		}
+	| mva_aggr TOK_IN '(' const_list ')'
+		{
+			CSphFilterSettings * f = pParser->AddFilter ( $1, SPH_FILTER_VALUES );
+			f->m_eMvaFunc = ( $1.m_iType==TOK_ALL ) ? SPH_MVAFUNC_ALL : SPH_MVAFUNC_ANY;
+			f->m_dValues = *$4.m_pValues.Ptr();
+			f->m_dValues.Uniq();
+		}
+	| mva_aggr TOK_NOT TOK_IN '(' const_list ')'
+		{
+			// tricky bit with inversion again
+			CSphFilterSettings * f = pParser->AddFilter ( $1, SPH_FILTER_VALUES );
+			f->m_eMvaFunc = ( $1.m_iType==TOK_ALL ) ? SPH_MVAFUNC_ANY : SPH_MVAFUNC_ALL;
+			f->m_bExclude = true;
+			f->m_dValues = *$5.m_pValues.Ptr();
+			f->m_dValues.Uniq();
+		}
+	| mva_aggr TOK_BETWEEN const_int TOK_AND const_int
+		{
+			AddMvaRange ( pParser, $1, $3.m_iValue, $5.m_iValue );
+		}
+	| mva_aggr TOK_NOT TOK_BETWEEN const_int TOK_AND const_int
+		{
+			// tricky bit with inversion again
+			CSphFilterSettings * f = pParser->AddFilter ( $1, SPH_FILTER_RANGE );
+			f->m_eMvaFunc = ( $1.m_iType==TOK_ALL ) ? SPH_MVAFUNC_ANY : SPH_MVAFUNC_ALL;
+			f->m_bExclude = true;
+			f->m_iMinValue = $4.m_iValue;
+			f->m_iMaxValue = $6.m_iValue;
+		}
+	| mva_aggr '<' const_int
+		{
+			AddMvaRange ( pParser, $1, INT64_MIN, $3.m_iValue-1 );
+		}
+	| mva_aggr '>' const_int
+		{
+			AddMvaRange ( pParser, $1, $3.m_iValue+1, INT64_MAX );
+		}
+	| mva_aggr TOK_LTE const_int
+		{
+			AddMvaRange ( pParser, $1, INT64_MIN, $3.m_iValue );
+		}
+	| mva_aggr TOK_GTE const_int
+		{
+			AddMvaRange ( pParser, $1, $3.m_iValue, INT64_MAX );
+		}
 	;
 
 expr_ident:
@@ -581,10 +667,15 @@ expr_ident:
 				YYERROR;
 		}
 	| json_expr
-	| TOK_INTEGER '(' json_expr ')'
-	| TOK_DOUBLE '(' json_expr ')'
-	| TOK_BIGINT '(' json_expr ')'
+	| TOK_INTEGER '(' json_expr ')'	{ TRACK_BOUNDS ( $$, $1, $4 ); }
+	| TOK_DOUBLE '(' json_expr ')'	{ TRACK_BOUNDS ( $$, $1, $4 ); }
+	| TOK_BIGINT '(' json_expr ')'	{ TRACK_BOUNDS ( $$, $1, $4 ); }
 	| TOK_FACET '(' ')'
+	;
+
+mva_aggr:
+	TOK_ANY '(' ident ')'	{ $$ = $3; $$.m_iType = TOK_ANY; }
+	| TOK_ALL '(' ident ')'	{ $$ = $3; $$.m_iType = TOK_ALL; }
 	;
 
 const_int:
@@ -740,7 +831,12 @@ option_list:
 	;
 
 option_item:
-	ident '=' ident
+	ident
+		{
+			if ( !pParser->AddOption ( $1 ) )
+				YYERROR;
+		}
+	| ident '=' ident
 		{
 			if ( !pParser->AddOption ( $1, $3 ) )
 				YYERROR;
@@ -838,8 +934,10 @@ function:
 	| TOK_MIN '(' expr ',' expr ')'	{ TRACK_BOUNDS ( $$, $1, $6 ); } // handle clash with aggregate functions
 	| TOK_MAX '(' expr ',' expr ')'	{ TRACK_BOUNDS ( $$, $1, $6 ); }
 	| TOK_WEIGHT '(' ')'			{ TRACK_BOUNDS ( $$, $1, $3 ); }
-	| TOK_IDENT '(' expr TOK_FOR ident TOK_IN json_field ')' { TRACK_BOUNDS ( $$, $1, $8 ); }
+	| json_aggr '(' expr TOK_FOR ident TOK_IN json_field ')' { TRACK_BOUNDS ( $$, $1, $8 ); }
 	| TOK_REMAP '(' expr ',' expr ',' '(' arglist ')' ',' '(' arglist ')' ')' { TRACK_BOUNDS ( $$, $1, $14 ); }
+	| TOK_RAND '(' ')'				{ TRACK_BOUNDS ( $$, $1, $3 ); }
+	| TOK_RAND '(' arglist ')'		{ TRACK_BOUNDS ( $$, $1, $4 ); }
 	;
 	
 arglist:
@@ -850,6 +948,12 @@ arglist:
 arg:
 	expr
 	| TOK_QUOTED_STRING
+	;
+
+json_aggr:
+	TOK_ANY
+	| TOK_ALL
+	| TOK_INDEXOF
 	;
 
 consthash:
@@ -1438,6 +1542,14 @@ flush_index:
 		}
 	;
 	
+flush_hostnames:
+	TOK_FLUSH TOK_HOSTNAMES
+		{
+			SqlStmt_t & tStmt = *pParser->m_pStmt;
+			tStmt.m_eStmt = STMT_FLUSH_HOSTNAMES;
+		}
+	;	
+	
 //////////////////////////////////////////////////////////////////////////
 
 select_sysvar:
@@ -1483,7 +1595,7 @@ truncate:
 //////////////////////////////////////////////////////////////////////////
 
 optimize_index:
-	TOK_OPTIMIZE TOK_INDEX ident
+	TOK_OPTIMIZE TOK_INDEX ident opt_option_clause
 		{
 			SqlStmt_t & tStmt = *pParser->m_pStmt;
 			tStmt.m_eStmt = STMT_OPTIMIZE_INDEX;
@@ -1513,6 +1625,16 @@ drop_plugin:
 			pParser->ToStringUnescape ( s.m_sStringParam, $5 );
 		}
 	;
+
+reload_plugins:
+	TOK_RELOAD TOK_PLUGINS TOK_FROM TOK_SONAME TOK_QUOTED_STRING
+		{
+			SqlStmt_t & s = *pParser->m_pStmt;
+			s.m_eStmt = STMT_RELOAD_PLUGINS;
+			pParser->ToStringUnescape ( s.m_sUdfLib, $5 );
+		}
+	;
+
 //////////////////////////////////////////////////////////////////////////
 
 json_field:
@@ -1586,6 +1708,22 @@ facet_stmt:
 				pParser->m_pQuery->m_sFacetBy = pParser->m_pQuery->m_sGroupBy;
 				pParser->AddCount ();
 			}
+		}
+	;
+
+opt_reload_index_from:
+	// empty
+	| TOK_FROM TOK_QUOTED_STRING
+		{
+			pParser->ToStringUnescape ( pParser->m_pStmt->m_sStringParam, $2 );
+		}
+	;
+
+reload_index:
+	TOK_RELOAD TOK_INDEX ident opt_reload_index_from
+		{
+			pParser->m_pStmt->m_eStmt = STMT_RELOAD_INDEX;
+			pParser->ToString ( pParser->m_pStmt->m_sIndex, $3);
 		}
 	;
 

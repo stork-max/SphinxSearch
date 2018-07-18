@@ -3,10 +3,6 @@
 <test>
 <name>persistent MVA updates surviving after hard killing part 1 - *nix only</name>
 
-<requires>
-<non-windows/>
-</requires>
-
 <config>
 indexer
 {
@@ -99,9 +95,14 @@ else
 }
 $results[] = $client->Query ( 'test2' );
 
+global $g_ignore_weights;
+$ignore_old = $g_ignore_weights;
+$g_ignore_weights = false;
 // final fixup; we don't want to compare times
 for ( $i=0; $i<count($results); $i++ )
 	CompareResultSetFixup ( $results[$i], 0, true );
+	
+$g_ignore_weights = $ignore_old;
 
 ]]></custom_test>
 

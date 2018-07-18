@@ -7,17 +7,18 @@ set (LIBSPHINX_SRCS sphinx.cpp sphinxexcerpt.cpp
 		sphinxstemar.cpp sphinxutils.cpp sphinxstd.cpp
 		sphinxsort.cpp sphinxexpr.cpp sphinxfilter.cpp
 		sphinxsearch.cpp sphinxrt.cpp sphinxjson.cpp
-		sphinxaot.cpp sphinxplugin.cpp
-		sphinxudf.c)
+		sphinxaot.cpp sphinxplugin.cpp sphinxudf.c
+		sphinxqcache.cpp sphinxrlp.cpp)
 set (INDEXER_SRCS indexer.cpp)
 set (INDEXTOOL_SRCS indextool.cpp)
-set (SEARCHD_SRCS searchd.cpp)
+set (SEARCHD_SRCS searchd.cpp searchdha.cpp http/http_parser.c searchdhttp.cpp)
 set (SPELLDUMP_SRCS spelldump.cpp)
 set (TESTS_SRCS tests.cpp)
 
 # The headers is not neccessary for executable build, but nesessary for MSVC and other projects
 # all the (non-generated) headers
 file (GLOB HEADERS "sphinx*.h" lz4.h lz4hc.h http/http_parser.h)
+file (GLOB SEARCHD_H "searchd*.h" )
 
 file (GLOB GHEADERS "yysphinx*.h")
 source_group ("Generated Header Files" FILES ${GHEADERS})
@@ -44,7 +45,7 @@ add_dependencies (libsphinx generate_sphinxversion)
 # our executables
 add_executable (indexer ${INDEXER_SRCS})
 add_executable (indextool ${INDEXTOOL_SRCS})
-add_executable (searchd ${SEARCHD_SRCS})
+add_executable (searchd ${SEARCHD_SRCS} ${SEARCHD_H})
 add_executable (spelldump ${SPELLDUMP_SRCS})
 add_executable (tests ${TESTS_SRCS})
 target_link_libraries (indexer libsphinx ${EXTRA_LIBRARIES})

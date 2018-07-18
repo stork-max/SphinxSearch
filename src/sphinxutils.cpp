@@ -20,6 +20,7 @@
 #include "sphinxutils.h"
 #include "sphinxint.h"
 #include "sphinxplugin.h"
+#include "sphinxrlp.h"
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -54,7 +55,7 @@
 
 static char * ltrim ( char * sLine )
 {
-	while ( *sLine && isspace(*sLine) )
+	while ( *sLine && sphIsSpace(*sLine) )
 		sLine++;
 	return sLine;
 }
@@ -63,7 +64,7 @@ static char * ltrim ( char * sLine )
 static char * rtrim ( char * sLine )
 {
 	char * p = sLine + strlen(sLine) - 1;
-	while ( p>=sLine && isspace(*p) )
+	while ( p>=sLine && sphIsSpace(*p) )
 		p--;
 	p[1] = '\0';
 	return sLine;
@@ -96,7 +97,7 @@ void sphSplit ( CSphVector<CSphString> & dOut, const char * sIn )
 		while ( sphIsAlpha(*p) )
 			p++;
 		if ( sNext!=p )
-			dOut.Add().SetBinary ( sNext, p-sNext );
+			dOut.Add().SetBinary ( sNext, int (p-sNext) );
 	}
 }
 
@@ -115,7 +116,7 @@ void sphSplit ( CSphVector<CSphString> & dOut, const char * sIn, const char * sB
 			p++;
 
 		// add the token, skip the char
-		dOut.Add().SetBinary ( sNext, p-sNext );
+		dOut.Add().SetBinary ( sNext, int (p-sNext) );
 		if ( *p=='\0' )
 			break;
 
@@ -180,9 +181,7 @@ static bool sphWildcardMatchRec ( const T1 * sString, const T2 * sPattern )
 
 			// could not decide yet
 			// so just recurse both options
-			if ( sphWildcardMatchRec ( s, p ) )
-				return true;
-			if ( sphWildcardMatchRec ( s+1, p ) )
+			if ( sphWildcardMatchRec ( s, p ) || sphWildcardMatchRec ( s+1, p ) )
 				return true;
 			return false;
 
@@ -261,7 +260,7 @@ static bool sphWildcardMatchDP ( const T1 * sString, const T2 * sPattern )
 		}
 
 		s = sString;
-		int iPattern = p - sPattern + 1 - iEsc;
+		int iPattern = int (p - sPattern) + 1 - iEsc;
 		int iPrev = ( iPattern + 1 ) % iBufCount;
 		int iCur = iPattern % iBufCount;
 
@@ -277,7 +276,7 @@ static bool sphWildcardMatchDP ( const T1 * sString, const T2 * sPattern )
 
 		while ( *s )
 		{
-			int j = s - sString + 1;
+			int j = int (s - sString) + 1;
 			if ( !bEsc && *p=='*' )
 			{
 				dTmp[iCur][j] = dTmp[iPrev][j-1] || dTmp[iCur][j-1] || dTmp[iPrev][j];
@@ -359,7 +358,7 @@ int64_t CSphConfigSection::GetSize64 ( const char * sKey, int64_t iDefault ) con
 	strncpy ( sMemLimit, pEntry->cstr(), sizeof(sMemLimit) );
 	sMemLimit [ sizeof(sMemLimit)-1 ] = '\0';
 
-	int iLen = strlen ( sMemLimit );
+	size_t iLen = strlen ( sMemLimit );
 	if ( !iLen )
 		return iDefault;
 
@@ -534,7 +533,7 @@ static KeyDesc_t g_dKeysIndex[] =
 	{ "ignore_chars",			0, NULL },
 	{ "min_prefix_len",			0, NULL },
 	{ "min_infix_len",			0, NULL },
-	{ "max_substring_len",		0, NULL },
+	{ "max_substring_len",		KEY_DEPRECATED, "dict=keywords" },
 	{ "prefix_fields",			0, NULL },
 	{ "infix_fields",			0, NULL },
 	{ "enable_star",			KEY_REMOVED, NULL },
@@ -656,7 +655,7 @@ static KeyDesc_t g_dKeysSearchd[] =
 	{ "collation_server",		0, NULL },
 	{ "collation_libc_locale",	0, NULL },
 	{ "watchdog",				0, NULL },
-	{ "prefork_rotation_throttle", 0, NULL },
+	{ "prefork_rotation_throttle", KEY_REMOVED, NULL },
 	{ "snippets_file_prefix",	0, NULL },
 	{ "sphinxql_state",			0, NULL },
 	{ "rt_merge_iops",			0, NULL },
@@ -672,6 +671,17 @@ static KeyDesc_t g_dKeysSearchd[] =
 	{ "agent_query_timeout",	0, NULL },
 	{ "agent_retry_delay",		0, NULL },
 	{ "agent_retry_count",		0, NULL },
+	{ "net_wait_tm",			0, NULL },
+	{ "net_throttle_action",	0, NULL },
+	{ "net_throttle_accept",	0, NULL },
+	{ "net_send_job",			0, NULL },
+	{ "net_workers",			0, NULL },
+	{ "queue_max_length",		0, NULL },
+	{ "qcache_ttl_sec",			0, NULL },
+	{ "qcache_max_bytes",		0, NULL },
+	{ "qcache_thresh_msec",		0, NULL },
+	{ "sphinxql_timeout",		0, NULL },
+	{ "hostname_lookup",		0, NULL },
 	{ NULL,						0, NULL }
 };
 
@@ -687,6 +697,7 @@ static KeyDesc_t g_dKeysCommon[] =
 	{ "rlp_max_batch_size",		0, NULL },
 	{ "rlp_max_batch_docs",		0, NULL },
 	{ "plugin_dir",				0, NULL },
+	{ "progressive_merge",		0, NULL },
 	{ NULL,						0, NULL }
 };
 
@@ -899,7 +910,7 @@ bool TryToExec ( char * pBuffer, const char * szFilename, CSphVector<char> & dRe
 		dResult.Resize ( iTotalRead + BUFFER_SIZE );
 		for ( ;; )
 		{
-			iBytesRead = read ( iRead, (void*)&(dResult [iTotalRead]), BUFFER_SIZE );
+			iBytesRead = (int) read ( iRead, (void*)&(dResult [iTotalRead]), BUFFER_SIZE );
 			if ( iBytesRead==-1 && errno==EINTR ) // we can get SIGCHLD just before eof
 				continue;
 			break;
@@ -1044,7 +1055,7 @@ bool CSphConfigParser::Parse ( const char * sFileName, const char * pBuffer )
 				break; // FIXME! check for read error
 
 			m_iLine++;
-			int iLen = strlen(sBuf);
+			size_t iLen = strlen(sBuf);
 			if ( iLen<=0 )
 				LOC_ERROR ( "internal error; fgets() returned empty string" );
 
@@ -1241,7 +1252,7 @@ bool CSphConfigParser::Parse ( const char * sFileName, const char * pBuffer )
 			sCtx = sBuf;
 
 		char sStepback [ L_STEPBACK+1 ];
-		memcpy ( sStepback, sCtx, iCtx );
+		memcpy ( sStepback, sCtx, size_t ( iCtx ) );
 		sStepback[iCtx] = '\0';
 
 		fprintf ( stdout, "ERROR: %s in %s line %d col %d.\n", m_sError, m_sFileName.cstr(), m_iLine, iCol );
@@ -1340,7 +1351,7 @@ void sphConfDictionary ( const CSphConfigSection & hIndex, CSphDictSettings & tS
 				if ( !szPathName )
 					continue;
 
-				int iLen = strlen ( szPathName );
+				size_t iLen = strlen ( szPathName );
 				if ( !iLen || szPathName[iLen-1]=='/' )
 					continue;
 
@@ -1587,13 +1598,8 @@ bool sphConfIndex ( const CSphConfigSection & hIndex, CSphIndexSettings & tSetti
 	tSettings.m_eChineseRLP = bPlainRLP ? SPH_RLP_PLAIN : ( bBatchedRLP ? SPH_RLP_BATCHED : SPH_RLP_NONE );
 	tSettings.m_sRLPContext = hIndex.GetStr ( "rlp_context" );
 
-#if !USE_RLP
-	if ( tSettings.m_eChineseRLP!=SPH_RLP_NONE || !tSettings.m_sRLPContext.IsEmpty() )
-	{
-		tSettings.m_eChineseRLP = SPH_RLP_NONE;
-		fprintf ( stdout, "WARNING: RLP options specified, but no RLP support compiled; ignoring\n" );
-	}
-#endif
+	if ( !sphRLPCheckConfig ( tSettings, sError ) )
+		fprintf ( stdout, "WARNING: %s\n", sError.cstr() );
 
 	// all good
 	return true;
@@ -1630,8 +1636,6 @@ bool sphFixupIndexSettings ( CSphIndex * pIndex, const CSphConfigSection & hInde
 			pIndex->Setup ( tIndexSettings );
 		} else
 		{
-			if ( pIndex->m_bId32to64 )
-				tSettings.m_bCrc32 = true;
 			sphConfDictionary ( hIndex, tSettings );
 			pDict = sphCreateDictionaryCRC ( tSettings, NULL, pIndex->GetTokenizer (), pIndex->GetName(), sError );
 		}
@@ -1665,6 +1669,20 @@ bool sphFixupIndexSettings ( CSphIndex * pIndex, const CSphConfigSection & hInde
 		tSettings.m_sZones = hIndex.GetStr ( "index_zones" );
 
 		pIndex->Setup ( tSettings );
+	}
+
+	if ( !pIndex->GetFieldFilter() )
+	{
+		ISphFieldFilter * pFieldFilter = NULL;
+		CSphFieldFilterSettings tFilterSettings;
+		if ( sphConfFieldFilter ( hIndex, tFilterSettings, sError ) )
+			pFieldFilter = sphCreateRegexpFilter ( tFilterSettings, sError );
+
+		sphSpawnRLPFilter ( pFieldFilter, pIndex->GetSettings(), pIndex->GetTokenizer()->GetSettings(), pIndex->GetName(), sError );
+		if ( !sError.IsEmpty () )
+			sphWarning ( "index '%s': %s", pIndex->GetName(), sError.cstr() );
+
+		pIndex->SetFieldFilter ( pFieldFilter );
 	}
 
 	// exact words fixup, needed for RT indexes
@@ -1893,8 +1911,8 @@ static int sphVSprintf ( char * pOutput, const char * sFmt, va_list ap )
 {
 	enum eStates { SNORMAL, SPERCENT, SHAVEFILL, SINWIDTH, SINPREC };
 	eStates state = SNORMAL;
-	int iPrec = 0;
-	int iWidth = 0;
+	size_t iPrec = 0;
+	size_t iWidth = 0;
 	char cFill = ' ';
 	const char * pBegin = pOutput;
 	bool bHeadingSpace = true;
@@ -1966,7 +1984,7 @@ static int sphVSprintf ( char * pOutput, const char * sFmt, va_list ap )
 				const char * pValue = va_arg ( ap, const char * );
 				if ( !pValue )
 					pValue = "(null)";
-				int iValue = strlen ( pValue );
+				size_t iValue = strlen ( pValue );
 
 				if ( iWidth && bHeadingSpace )
 					while ( iValue < iWidth-- )
@@ -2021,7 +2039,7 @@ static int sphVSprintf ( char * pOutput, const char * sFmt, va_list ap )
 
 	// final zero to EOL
 	*pOutput++ = '\n';
-	return pOutput - pBegin;
+	return int ( pOutput - pBegin );
 }
 
 
@@ -2042,7 +2060,7 @@ void sphSafeInfo ( int iFD, const char * sFmt, ... )
 	va_start ( ap, sFmt );
 	int iLen = sphVSprintf ( g_sSafeInfoBuf, sFmt, ap ); // FIXME! make this vsnprintf
 	va_end ( ap );
-	sphWrite ( iFD, g_sSafeInfoBuf, iLen );
+	sphWrite ( iFD, g_sSafeInfoBuf, size_t (iLen) );
 }
 
 
@@ -2090,9 +2108,9 @@ const char * DoBacktrace ( int iDepth, int iSkip )
 	return g_pBacktrace; ///< sorry, no backtraces on Windows...
 }
 #else
-const char * DoBacktrace ( int iDepth, int iSkip )
+const char * DoBacktrace ( int, int )
 {
-	return NULL; ///< sorry, no backtraces on Windows...
+	return nullptr; ///< sorry, no backtraces...
 }
 #endif
 
@@ -2107,11 +2125,11 @@ void sphBacktrace ( int iFD, bool bSafe )
 #endif
 
 #ifdef CONFIGURE_FLAGS
-	sphSafeInfo ( iFD, "Configured with flags: "CONFIGURE_FLAGS );
+	sphSafeInfo ( iFD, "Configured with flags: " CONFIGURE_FLAGS );
 #endif
 
 #ifdef OS_UNAME
-	sphSafeInfo ( iFD, "Host OS is "OS_UNAME );
+	sphSafeInfo ( iFD, "Host OS is " OS_UNAME );
 #endif
 
 	bool bOk = true;
@@ -2254,7 +2272,7 @@ void sphBacktrace ( int iFD, bool bSafe )
 			const char * s = g_pArgv[i];
 			while ( *s )
 				s++;
-			int iLen = s-g_pArgv[i];
+			size_t iLen = s-g_pArgv[i];
 			sphWrite ( iFD, g_pArgv[i], iLen );
 			sphWrite ( iFD, " ", 1 );
 			int iWas = iColumn % 80;
@@ -2394,14 +2412,12 @@ void sphConfigureCommon ( const CSphConfig & hConf )
 
 	CSphConfigSection & hCommon = hConf["common"]["common"];
 	g_sLemmatizerBase = hCommon.GetStr ( "lemmatizer_base" );
-#if USE_RLP
-	g_sRLPRoot = hCommon.GetStr ( "rlp_root" );
-	g_sRLPEnv = hCommon.GetStr ( "rlp_environment" );
-	g_iRLPMaxBatchSize = hCommon.GetSize ( "rlp_max_batch_size", 51200 );
-	g_iRLPMaxBatchDocs = hCommon.GetInt ( "rlp_max_batch_docs", 50 );
-#endif
+	sphConfigureRLP ( hCommon );
+
+	g_bProgressiveMerge = ( hCommon.GetInt ( "progressive_merge", 1 )!=0 );
+
 	bool bJsonStrict = false;
-	bool bJsonAutoconvNumbers = false;
+	bool bJsonAutoconvNumbers;
 	bool bJsonKeynamesToLowercase = false;
 
 	if ( hCommon("on_json_attr_error") )
@@ -2435,11 +2451,13 @@ bool sphIsChineseCode ( int iCode )
 {
 	return ( ( iCode>=0x2E80 && iCode<=0x2EF3 ) ||	// CJK radicals
 		( iCode>=0x2F00 && iCode<=0x2FD5 ) ||	// Kangxi radicals
+		( iCode>=0x3000 && iCode<=0x303F ) ||	// CJK Symbols and Punctuation
 		( iCode>=0x3105 && iCode<=0x312D ) ||	// Bopomofo
 		( iCode>=0x31C0 && iCode<=0x31E3 ) ||	// CJK strokes
 		( iCode>=0x3400 && iCode<=0x4DB5 ) ||	// CJK Ideograph Extension A
-		( iCode>=0x4E00 && iCode<=0x9FCC ) ||	// Ideograph
+		( iCode>=0x4E00 && iCode<=0x9FFF ) ||	// Ideograph
 		( iCode>=0xF900 && iCode<=0xFAD9 ) ||	// compatibility ideographs
+		( iCode>=0xFF00 && iCode<=0xFFEF ) ||	// Halfwidth and fullwidth forms
 		( iCode>=0x20000 && iCode<=0x2FA1D ) );	// CJK Ideograph Extensions B/C/D, and compatibility ideographs
 }
 
@@ -2486,47 +2504,15 @@ const char * sphGetRankerName ( ESphRankMode eRanker )
 
 #if HAVE_DLOPEN
 
-void CSphDynamicLibrary::FillError ( const char * sMessage )
+CSphDynamicLibrary::CSphDynamicLibrary ( const char * sPath )
+	: m_bReady ( false )
+	, m_pLibrary ( nullptr )
 {
-	const char* sDlerror = dlerror();
-	if ( sMessage )
-		m_sError.SetSprintf ( "%s: %s", sMessage, sDlerror ? sDlerror : "(null)" );
+	m_pLibrary = dlopen ( sPath, RTLD_NOW | RTLD_GLOBAL );
+	if ( !m_pLibrary )
+		sphLogDebug ( "dlopen(%s) failed", sPath );
 	else
-		m_sError.SetSprintf ( "%s", sDlerror ? sDlerror : "(null)" );
-}
-
-bool CSphDynamicLibrary::Init ( const char * sPath, bool bGlobal )
-{
-	if ( m_pLibrary )
-		return true;
-	int iFlags = bGlobal?(RTLD_NOW | RTLD_GLOBAL):(RTLD_LAZY|RTLD_LOCAL);
-	m_pLibrary = dlopen ( sPath, iFlags );
-	if ( !m_pLibrary )
-	{
-		FillError ( "dlopen() failed" );
-		return false;
-	}
-	sphLogDebug ( "dlopen(%s)=%p", sPath, m_pLibrary );
-	m_bReady = true;
-	return m_bReady;
-}
-
-bool CSphDynamicLibrary::LoadSymbol ( const char* sName, void** ppFunc )
-{
-	if ( !m_pLibrary )
-		return false;
-
-	if ( !m_bReady )
-		return false;
-
-	void * pResult = dlsym ( m_pLibrary, sName );
-	if ( !pResult )
-	{
-		FillError ( "Symbol not found" );
-		return false;
-	}
-	*ppFunc = pResult;
-	return true;
+		sphLogDebug ( "dlopen(%s)=%p", sPath, m_pLibrary );
 }
 
 bool CSphDynamicLibrary::LoadSymbols ( const char** sNames, void*** pppFuncs, int iNum )
@@ -2534,15 +2520,15 @@ bool CSphDynamicLibrary::LoadSymbols ( const char** sNames, void*** pppFuncs, in
 	if ( !m_pLibrary )
 		return false;
 
-	if ( !m_bReady )
-		return false;
+	if ( m_bReady )
+		return true;
 
 	for ( int i=0; i<iNum; ++i )
 	{
 		void* pResult = dlsym ( m_pLibrary, sNames[i] );
 		if ( !pResult )
 		{
-			FillError ( "Symbol not found" );
+			sphLogDebug ( "Symbol %s not found", sNames[i] );
 			return false;
 		}
 		// yes, it is void*** - triple pointer.
@@ -2553,15 +2539,13 @@ bool CSphDynamicLibrary::LoadSymbols ( const char** sNames, void*** pppFuncs, in
 		// one more level of indirection. void*** actually is void**[]
 		*pppFuncs[i] = pResult;
 	}
-
+	m_bReady = true;
 	return true;
 };
 
 #else
 
-void CSphDynamicLibrary::FillError ( const char * e ) { m_sError = e; }
-bool CSphDynamicLibrary::Init ( const char *, bool ) { return false; }
-bool CSphDynamicLibrary::LoadSymbol ( const char *, void ** ) { return false; }
+CSphDynamicLibrary::CSphDynamicLibrary ( const char * ) {};
 bool CSphDynamicLibrary::LoadSymbols ( const char **, void ***, int ) { return false; }
 
 #endif
@@ -2572,10 +2556,10 @@ void RebalanceWeights ( const CSphFixedVector<int64_t> & dTimers, WORD * pWeight
 	assert ( dTimers.GetLength () );
 	int64_t iSum = 0;
 	int iCounters = 0;
-	ARRAY_FOREACH ( i, dTimers )
+	for ( auto iTime : dTimers )
 	{
-		iSum += dTimers[i];
-		iCounters += ( dTimers[i]>0 );
+		iSum += iTime;
+		iCounters += ( iTime>0 );
 	}
 
 	// no statistics, all timers bad, keep previous weights
@@ -2603,7 +2587,7 @@ void RebalanceWeights ( const CSphFixedVector<int64_t> & dTimers, WORD * pWeight
 		else if ( iCounters==1 ) // case when only one mirror has valid counter
 			fWeight = 1.0f - fEmptiesPercent;
 
-		int iWeight = int( fWeight * 65535.0f );
+		int iWeight = int ( fWeight * 65535.0f );
 		assert ( iWeight>=0 && iWeight<=65535 );
 		pWeights[i] = (WORD)iWeight;
 		iCheck += pWeights[i];
