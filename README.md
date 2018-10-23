@@ -11,7 +11,7 @@
 
 - 提取sfc的补丁，合到官方最新开源版2.2.10
 - 源码 http://git.dh.sogou-inc.com/xyma/review-sphinx223.git
-- 也有基于[sphinx2.3.2-beta](https://github.com/sphinxsearch/sphinx/releases/tag/2.3.2-beta)的[分支版本](http://git.dh.sogou-inc.com/xyma/review-sphinx223/commits/v2.2.11)
+- 也有基于[sphinx2.3.2-beta](https://github.com/sphinxsearch/sphinx/releases/tag/2.3.2-beta)的[分支版本](http://git.dh.sogou-inc.com/xyma/review-sphinx223/commits/v2.3.2)
 
 
 ### 分词词库 ###
