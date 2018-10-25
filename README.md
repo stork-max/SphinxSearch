@@ -14,6 +14,21 @@
 - 也有基于[sphinx2.3.2-beta](https://github.com/sphinxsearch/sphinx/releases/tag/2.3.2-beta)的[分支版本](http://git.dh.sogou-inc.com/xyma/review-sphinx223/commits/v2.3.2)
 
 
+### 官版“停用”的配置项 ###
+
+- **DEPRECATED**
+    - **charset_type** http://sphinxsearch.com/docs/current/sphinx-deprecations-defaults.html
+    - **max_matches** http://sphinxsearch.com/forum/view.html?id=15211
+    - **prefix_fields** http://sphinxsearch.com/forum/view.html?id=12117
+    - **enable_star** http://sphinxsearch.com/forum/view.html?id=14300
+
+- **REMOVED**
+    - **sql_query_info** http://sphinxsearch.com/forum/view.html?id=11769
+    - **sql_query_info_pre**
+    - **compat_sphinxql_magics**
+    - **charset_dictpath**
+
+
 ### 分词词库 ###
 
 - SFC下载 https://code.google.com/archive/p/sphinx-for-chinese/downloads
